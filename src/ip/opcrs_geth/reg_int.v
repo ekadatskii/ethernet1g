@@ -66,7 +66,7 @@ input							btn3,
 input							btn4
 );
 
-    RegCPUData U_0_000(Tx_Hwmark                ,7'd000,16'h0009,Reset,Clk_reg,!WRB,CSB,CA,16'h0009/*CD_in*/);					//???????????
+    RegCPUData U_0_000(Tx_Hwmark                ,7'd000,16'h00FF,Reset,Clk_reg,!WRB,CSB,CA,16'h00FF/*CD_in*/);					//???????????
     RegCPUData U_0_001(Tx_Lwmark                ,7'd001,16'h0008,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_002(pause_frame_send_en      ,7'd002,16'h0000,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_003(pause_quanta_set         ,7'd003,16'h0000,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
@@ -211,7 +211,7 @@ always @ (posedge Clk_reg or posedge Reset)
 	if (Reset)
 		CtrlData_reg	<= 16'b0;
 	else if (!btn3_q1 & btn3_q2)
-		CtrlData_reg	<= 16'b1100_0101_0000_0000;
+		CtrlData_reg	<= 16'b1100_0000_0000_0000;
 
 assign RStat = RStat_reg;
 assign WCtrlData = WCtrlData_reg;

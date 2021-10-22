@@ -64,6 +64,9 @@ reg         Tx_mac_wr_r;
 wire [7:0]	rgmii_in_4_temp_reg_out;
 wire [1:0]	rgmii_in_1_temp_reg_out;
 
+wire			  mac_tx_clk_45_shift;
+
+
 //FIFO
 wire	[9:0]		data_to_fifo;
 wire	[9:0]		data_from_fifo;
@@ -201,7 +204,11 @@ wire [3:0]	  alt_adap_txd;
 wire 			  alt_adap_txctl;
 wire 			  alt_adap_txclk;
 
-wire			  mac_tx_clk_45_shift;
+wire	[3:0]	iobuf_dat_h;
+wire	[3:0]	iobuf_dat_l;
+wire	[3:0]	iobuf_dat_to_phy;
+wire			iobuf_ctl_to_phy;
+
 
 //Output signals
 //assign eth_mdc = mdc;
@@ -216,40 +223,44 @@ wire				mac_rx_clk_sh;
 //RESET
 always @(posedge clk)		rst_rr	<= {rst_rr[1:0], 1'b1};
 assign rst_n		= rst_rr[2];
-	
+
 //--------------------------------------------------------------------------------//
 //											ALTERA PLL													 //
 //--------------------------------------------------------------------------------//
+/*
 alt_pll	alt_pll_inst 
 (
 	.inclk0 ( clk ),
 	.c0 ( pll_2_5m_clk ),			//2.5 Mhz
 	.c1 ( pll_25m_clk ),				//25  Mhz
 	.locked (  )
-);
-
+);*/
+/*
 eth_pll eth_pll(
 	.inclk0	(mac_tx_clk_o),
 	.c0		(mac_tx_clk_45_shift)
-);
-
+);*/
+wire pll_250_clk;
 //ALTERA PLL 125/2
 //--------------------------------------------------------
 altpll_125	altpll_125_inst
 (
 	.inclk0 ( clk_125 ),
 	.c0 ( pll_62_5m_clk ),			//62.5 Mhz
+	.c1 ( mac_tx_clk_45_shift ),
+//	.c2 ( pll_250_clk ),				//62.5 Mhz
 	.locked (  )
 );
 
 //ALTERA PLL 125/2
 //--------------------------------------------------------
+/*
 altpll_125sh	altpll_125sh_inst
 (
 	.inclk0 ( mac_rx_clk ),
 	.c0 ( mac_rx_clk_sh ),			//62.5 Mhz
 	.locked (  )
-);
+);*/
 
 //--------------------------------------------------------------------------------//
 //									OPENCORES MAC CONTROLLER										 //
@@ -332,7 +343,7 @@ output  [15:0]  Pkg_lgth_fifo_data      ,
 
 assign  Mdi=Mdio;
 assign  Mdio=MdoEn?Mdo:1'bz;
-assign mac_tx_clk_o = clk_125;
+//assign mac_tx_clk_o = clk_125;
 
 
 //--------------------------------------------------------------------------------//
@@ -620,7 +631,14 @@ transport_layer transport_layer
 
 //--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
-//--------------------------------------------------------------------------------//	 
+//--------------------------------------------------------------------------------//
+
+eth1g_transmitter eth1g_transmitter
+(
+
+);
+
+	 
 wire	[31:0]	fifo32_wr_data_mux;
 wire	[ 3:0]	fifo4_wr_data_mux;
 reg	[15:0]	wr_reg_ptr;
@@ -636,15 +654,38 @@ assign fifo32_wr_data_mux =	//ETHERNET 2 + IP(lowest 16 bit)
 										(wr_reg_ptr == 16'd3)  ? 32'h08004500 :
 										
 										//IP + UDP(lowest 16 bit)
-										(wr_reg_ptr == 16'd4)  ? 32'h001e64d7 :
+//										(wr_reg_ptr == 16'd4)  ? 32'h001e64d7 :
+										(wr_reg_ptr == 16'd4)  ? 32'h003a64d7 :
 										(wr_reg_ptr == 16'd5)  ? 32'h00008011 :
-										(wr_reg_ptr == 16'd6)  ? 32'h0000c1e8 :
-										(wr_reg_ptr == 16'd7)  ? 32'h1a4fffff :
-										(wr_reg_ptr == 16'd8)  ? 32'hfffff718 :
+//										(wr_reg_ptr == 16'd6)  ? 32'h0000c1e8 :
+//										(wr_reg_ptr == 16'd7)  ? 32'h1a4fffff :
+										(wr_reg_ptr == 16'd6)  ? 32'h0000a9fe :
+										(wr_reg_ptr == 16'd7)  ? 32'hce77a9fe :
+										(wr_reg_ptr == 16'd8)  ? 32'hce78f718 :
 										
 										//UDP										
-										(wr_reg_ptr == 16'd9)  ? 32'h1388000a :
-										(wr_reg_ptr == 16'd10) ? 32'he7cf3132 :
+//										(wr_reg_ptr == 16'd9)  ? 32'h1388000a :
+										(wr_reg_ptr == 16'd9)  ? 32'h13880026 :
+//										(wr_reg_ptr == 16'd10) ? 32'he7cf3132 :
+										(wr_reg_ptr == 16'd10) ? 32'he7cf2B2B :
+										/*
+										(wr_reg_ptr == 16'd11) ? 32'h33343536 :
+										(wr_reg_ptr == 16'd12) ? 32'h3738393A :
+										(wr_reg_ptr == 16'd13) ? 32'h3B3C3D3E :
+										(wr_reg_ptr == 16'd14) ? 32'h3F404142 :
+										(wr_reg_ptr == 16'd15) ? 32'h43444546 :
+										(wr_reg_ptr == 16'd16) ? 32'h4748494A :
+										(wr_reg_ptr == 16'd17) ? 32'h2B4C4D4E :*/
+										/*
+										(wr_reg_ptr == 16'd11) ? 32'h2B2B2B2B :
+										(wr_reg_ptr == 16'd12) ? 32'h2B2B2B2B :
+										(wr_reg_ptr == 16'd13) ? 32'h2B2B2B2B :
+										(wr_reg_ptr == 16'd14) ? 32'h2B2B2B2B :
+										(wr_reg_ptr == 16'd15) ? 32'h2B2B2B2B :
+										(wr_reg_ptr == 16'd16) ? 32'h2B2B2B2B :
+										(wr_reg_ptr == 16'd17) ? 32'h2B2B2B2B :*/
+										((wr_reg_ptr >= 16'd11) & (wr_reg_ptr < 16'd375)) ? 32'h2B2B2B2B :										
+										(wr_reg_ptr == 16'd375) ? 32'h2B2B2B2B :
 										32'h0000;
 	
 assign fifo4_wr_data_mux =		//ETHERNET 2
@@ -662,15 +703,25 @@ assign fifo4_wr_data_mux =		//ETHERNET 2
 										
 										//UDP	
 										(wr_reg_ptr == 16'd9)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd10) ? 4'b0010 :
+										(wr_reg_ptr == 16'd10) ? 4'b0000 :
+										/*
+										(wr_reg_ptr == 16'd11) ? 4'b0000 :
+										(wr_reg_ptr == 16'd12) ? 4'b0000 :
+										(wr_reg_ptr == 16'd13) ? 4'b0000 :
+										(wr_reg_ptr == 16'd14) ? 4'b0000 :
+										(wr_reg_ptr == 16'd15) ? 4'b0000 :
+										(wr_reg_ptr == 16'd16) ? 4'b0000 :*/
+										((wr_reg_ptr >= 16'd11) & (wr_reg_ptr < 16'd375)) ? 4'b0000 :										
+										(wr_reg_ptr == 16'd375) ? 4'b0010 :
 										4'b0000;
 										
 //TIMER
 reg	[31:0]	timer_reg;
 wire				timer_pas;
 
-always @(posedge clk_125 or negedge rst_n)
+always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)													timer_reg <= 32'd250000000;				//2 sec
+	else if ((wr_reg_ptr == 16'd375) & wr_data_on)	timer_reg <= 32'd10;//32'd6250;
 	else if (!timer_pas)										timer_reg <= timer_reg - 1'b1;
 	
 assign timer_pas = timer_reg == 0;
@@ -678,7 +729,7 @@ assign timer_pas = timer_reg == 0;
 //POINTER
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)													wr_reg_ptr <= 16'b0;
-	else if ((wr_reg_ptr == 16'd10) & wr_data_on)	wr_reg_ptr <= 16'b0;
+	else if ((wr_reg_ptr == 16'd375) & wr_data_on)	wr_reg_ptr <= 16'b0;
 	else if (wr_data_on)										wr_reg_ptr <= wr_reg_ptr + 1'b1;
 
 //DATA ENABLE
@@ -742,41 +793,31 @@ reg	[7:0]		mac_txd_rr;
 reg				mac_txen_r;
 reg				mac_txen_rr;
 
-always @(posedge mac_tx_clk_o or negedge rst_n)
+always @(posedge mac_tx_clk_45_shift or negedge rst_n)
 	if (!rst_n)		mac_txd_r <= 8'b0;
 	else 				mac_txd_r <= mac_txd;
 	
-always @(posedge mac_tx_clk_o or negedge rst_n)
+always @(posedge mac_tx_clk_45_shift or negedge rst_n)
 	if (!rst_n)		mac_txd_rr <= 8'b0;
 	else 				mac_txd_rr <= mac_txd_r;
 	
-always @(posedge mac_tx_clk_o or negedge rst_n)
+always @(posedge mac_tx_clk_45_shift or negedge rst_n)
 	if (!rst_n)		mac_txen_r <= 1'b0;
 	else 				mac_txen_r <= mac_txen;
-	
-always @(posedge mac_tx_clk_o or negedge rst_n)
+
+always @(posedge mac_tx_clk_45_shift or negedge rst_n)
 	if (!rst_n)		mac_txen_rr <= 1'b0;
 	else 				mac_txen_rr <= mac_txen_r;
 
-	
 
-/*
-reg	[7:0]		test_shift;
 
-always @(posedge clk or negedge rst_n)
-	if (!rst_n) 					test_shift <= 8'hFF;
-	else if (test_shift[0])  	test_shift <= 8'h00;
-	else if (!test_shift[0])  	test_shift <= 8'hFF;*/
 
-wire	[3:0]	iobuf_dat_h;
 	
   iobuf4_iobuf_in_u5i iobuf4_h
 	 ( 
 		.datain		(mac_txd_rr[3:0]),
 		.dataout		(iobuf_dat_h)
 	 );
-	 
-wire	[3:0]	iobuf_dat_l;
 	 
   iobuf4_iobuf_in_u5i iobuf4_l
 	 ( 
@@ -803,9 +844,8 @@ wire	[3:0]	iobuf_dat_l;
       .outclock (mac_tx_clk_45_shift),
       .dataout  (rgmii_out1)
     );
-	 
-	
-wire	[3:0]	iobuf_dat_to_phy;
+
+
 
   iobuf4_iobuf_in_u5i iobuf4_to_phy
 	 ( 
@@ -813,33 +853,33 @@ wire	[3:0]	iobuf_dat_to_phy;
 		.dataout		(iobuf_dat_to_phy)
 	 );
 	 
-wire	iobuf_ctl_to_phy;
 	 
   iobuf1_iobuf_in_r5i iobuf1_to_phy
 	 ( 
 		.datain		(rgmii_out1),
 		.dataout		(iobuf_ctl_to_phy)
 	 );
-	 
 
-/*
-//SEND CTL FROM MAC TO TRANCEIVER
-  altera_gtr_rgmii_out1 the_rgmii_out1
-    (
-      .aclr (),
-      .datain_h (mac_txer),
-      .datain_l (mac_txen),
-      .dataout  (rgmii_out1),
-      .outclock (mac_tx_clk_o)
-    );
-*/
 
 //INOUTS
 //-------------------------------------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------------------------------------
-assign rgmii_tx_clk = mac_tx_clk_o;
+reg [3:0] test_reg4;
+reg 		 test_reg1;
+/*
+always @(posedge mac_tx_clk_o)
+begin
+	test_reg4 <= rgmii_out4;
+	test_reg1 <= rgmii_out1;
+end
+*/
+
+
+assign rgmii_tx_clk = clk_125;
 assign rgmii_txd = iobuf_dat_to_phy;
 assign rgmii_tx_ctl = iobuf_ctl_to_phy;
+
+
 
 //TEST PINS	
 /*
@@ -856,20 +896,20 @@ assign out_clkd3 = rgmii_rxd[3];
 //USER OUT
 /*
 assign out_clk = mac_tx_clk_o;
-assign out_ctl = rgmii_out1;
-assign out_clkd0 = rgmii_out4[0];
-assign out_clkd1 = rgmii_out4[1];
-assign out_clkd2 = rgmii_out4[2];
-assign out_clkd3 = rgmii_out4[3];*/
-
+assign out_ctl = iobuf_ctl_to_phy;
+assign out_clkd0 = iobuf_dat_to_phy[0];
+assign out_clkd1 = iobuf_dat_to_phy[1];
+assign out_clkd2 = iobuf_dat_to_phy[2];
+assign out_clkd3 = iobuf_dat_to_phy[3];
+*/
 
 //ADAPTER OUT
 /*
-assign out_clk = alt_adap_txclk;
-assign out_ctl = alt_adap_txctl;
-assign out_clkd0 = alt_adap_txd[0];
-assign out_clkd1 = alt_adap_txd[1];
-assign out_clkd2 = alt_adap_txd[2];
-assign out_clkd3 = alt_adap_txd[3];
+assign out_clk = mac_tx_clk_o;
+assign out_ctl = iobuf_ctl_to_phy;
+assign out_clkd0 = iobuf_dat_to_phy[0];
+assign out_clkd1 = iobuf_dat_to_phy[1];
+assign out_clkd2 = iobuf_dat_to_phy[2];
+assign out_clkd3 = iobuf_dat_to_phy[3];
 */
 endmodule
