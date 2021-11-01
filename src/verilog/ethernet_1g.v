@@ -632,118 +632,155 @@ transport_layer transport_layer
 //--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
 //--------------------------------------------------------------------------------//
+parameter UDP_DATA_LENGTH_IN_BYTE = 16'd1450;
 
-eth1g_transmitter eth1g_transmitter
+wire	[47:0]		mac_dst_addr		= 48'hFF_FF_FF_FF_FF_FF;		//broadcast
+wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;		//
+wire	[15:0]		mac_type				= 16'h08_00;
+
+wire	[ 3:0]		ip_version			= 4'h4;
+wire	[ 3:0]		ip_head_len			= 4'h5;
+wire	[ 7:0]		ip_dsf				= 8'h00;
+wire	[15:0]		ip_total_len		= 16'd20/*ip length*/ + 16'd8/*udp header length*/ + UDP_DATA_LENGTH_IN_BYTE;
+wire	[15:0]		ip_id					= 16'h64_D7;		//25815
+wire	[ 2:0]		ip_flag				= 3'h0;
+wire	[13:0]		ip_frag_offset		= 13'h00_00;		
+wire	[ 7:0]		ip_ttl				= 8'h80;				//128
+wire	[ 7:0]		ip_prot				= 8'h11;				//UDP
+wire	[15:0]		ip_head_chksum		= 16'h00_00;
+wire	[31:0]		ip_src_addr			= 32'hA9_FE_CE_77;		//169.254.206.119
+wire	[31:0]		ip_dst_addr			= 32'hA9_FE_CE_78;
+wire	[31:0]		ip_options			= 32'h00_00_00_00;		//Not used now
+	
+wire	[15:0]		udp_src_port		= 16'hF718;			//63256
+wire	[15:0]		udp_dst_port		= 16'h1389;			//5001			
+wire	[15:0]		udp_data_length	= UDP_DATA_LENGTH_IN_BYTE;
+
+wire	[31:0]		udp_data_tr			= 32'h00_01_02_03;
+
+//OUTPUTS
+wire	[31:0]		udp_data_o;
+wire	[1:0]			udp_be_o;
+wire 					udp_data_rdy_o;
+wire					udp_data_in_rd;
+wire					udp_sop;
+wire					udp_eop;
+
+//INPUT FROM FIFO
+wire					udp_data_out_rd;
+
+reg				start_reg;
+reg				start_lock;
+reg	[31:0]	udp_data_gen;
+reg	[63:0]	udp_packet_num;
+reg	[ 3:0]	udp_content_chkr;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)
+					udp_packet_num <= 64'b0;
+	else if (udp_eop & udp_data_out_rd)
+					udp_packet_num <= udp_packet_num + 1'b1;	
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)
+					udp_content_chkr <= 4'd4;
+	else if (udp_eop & udp_data_out_rd)
+					udp_content_chkr <= 4'd4;
+	else if (udp_data_in_rd & (udp_content_chkr != 4'd2))
+					udp_content_chkr <= udp_content_chkr - 1'b1;	
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)	
+					udp_data_gen <= udp_packet_num;
+	else if (start_reg)
+					udp_data_gen <= udp_packet_num[63:32];
+	else if ((udp_content_chkr == 4'd4) & udp_data_in_rd)
+					udp_data_gen <= udp_packet_num[31: 0];							
+	else if ((udp_content_chkr == 4'd3) & udp_data_in_rd)
+					udp_data_gen <= udp_data_tr;							
+	else if ((udp_content_chkr == 4'd2) & udp_data_in_rd)	
+				begin
+					udp_data_gen[31:24] <= udp_data_gen[31:24] + 4'd4;
+					udp_data_gen[23:16] <= udp_data_gen[23:16] + 4'd4;
+					udp_data_gen[15: 8] <= udp_data_gen[15: 8] + 4'd4;
+					udp_data_gen[ 7: 0] <= udp_data_gen[ 7: 0] + 4'd4;
+				end
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									start_reg <= 1'b0;
+	else if (start_reg)							start_reg <= 1'b0;
+	else if (timer_pas & !start_lock)		start_reg <= 1'b1;
+	
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									start_lock <= 1'b0;
+	else if (udp_eop)								start_lock <= 1'b0;
+	else if (timer_pas)							start_lock <= 1'b1;
+
+udp_full_transmitter udp_full_transmitter
 (
+	.clk						(	pll_62_5m_clk	)
+	,.rst_n					(	rst_n				)
+	
+	//control signals
+	,.start					(	start_reg		)
+	
+	//output data + controls
+	,.data_out				(	udp_data_o		)
+	,.be_out					(	udp_be_o			)
+	,.data_out_rdy			(	udp_data_rdy_o	)
+	,.data_out_rd			(	udp_data_out_rd)
+	,.data_in				(	udp_data_gen	)
+	,.data_in_rd			(	udp_data_in_rd	)
+	,.sop						(	udp_sop			)
+	,.eop						(	udp_eop			)
+	
+	//---------------------------------------------------------------------
+	//MAC
+	,.mac_src_addr			(	mac_src_addr	)
+	,.mac_dst_addr			(	mac_dst_addr	)
+	,.mac_type				(	mac_type			)
 
+	//---------------------------------------------------------------------
+	//IP
+	,.ip_version			(	ip_version		)
+	,.ip_head_len			(	ip_head_len		)
+	,.ip_dsf					(	ip_dsf			)
+	,.ip_total_len			(	ip_total_len	)
+	,.ip_id					(	ip_id				)
+	,.ip_flag				(	ip_flag			)
+	,.ip_frag_offset		(	ip_frag_offset	)
+	,.ip_ttl					(	ip_ttl			)
+	,.ip_prot				(	ip_prot			)
+	,.ip_head_chksum		(	ip_head_chksum	)
+	,.ip_src_addr			(	ip_src_addr		)
+	,.ip_dst_addr			(	ip_dst_addr		)
+	,.ip_options			(	ip_options		)
+	
+	//---------------------------------------------------------------------	
+	//UDP
+	,.udp_src_port			(	udp_src_port	)
+	,.udp_dst_port			(	udp_dst_port	)
+	,.udp_data_length		(	udp_data_length)
 );
 
-	 
-wire	[31:0]	fifo32_wr_data_mux;
-wire	[ 3:0]	fifo4_wr_data_mux;
-reg	[15:0]	wr_reg_ptr;
-reg				wr_data_en;
-wire				wr_data_on;
-reg	[15:0]	wr_timer;
-
-//TEST DATA SENDS
-assign fifo32_wr_data_mux =	//ETHERNET 2 + IP(lowest 16 bit)
-										(wr_reg_ptr == 16'd0)  ? 32'hFFFFFFFF :		
-										(wr_reg_ptr == 16'd1)  ? 32'hFFFF04d4 :
-										(wr_reg_ptr == 16'd2)  ? 32'hc4a5a8e1 : //32'hc4a5a8e0 :
-										(wr_reg_ptr == 16'd3)  ? 32'h08004500 :
-										
-										//IP + UDP(lowest 16 bit)
-//										(wr_reg_ptr == 16'd4)  ? 32'h001e64d7 :
-										(wr_reg_ptr == 16'd4)  ? 32'h003a64d7 :
-										(wr_reg_ptr == 16'd5)  ? 32'h00008011 :
-//										(wr_reg_ptr == 16'd6)  ? 32'h0000c1e8 :
-//										(wr_reg_ptr == 16'd7)  ? 32'h1a4fffff :
-										(wr_reg_ptr == 16'd6)  ? 32'h0000a9fe :
-										(wr_reg_ptr == 16'd7)  ? 32'hce77a9fe :
-										(wr_reg_ptr == 16'd8)  ? 32'hce78f718 :
-										
-										//UDP										
-//										(wr_reg_ptr == 16'd9)  ? 32'h1388000a :
-										(wr_reg_ptr == 16'd9)  ? 32'h13880026 :
-//										(wr_reg_ptr == 16'd10) ? 32'he7cf3132 :
-										(wr_reg_ptr == 16'd10) ? 32'he7cf2B2B :
-										/*
-										(wr_reg_ptr == 16'd11) ? 32'h33343536 :
-										(wr_reg_ptr == 16'd12) ? 32'h3738393A :
-										(wr_reg_ptr == 16'd13) ? 32'h3B3C3D3E :
-										(wr_reg_ptr == 16'd14) ? 32'h3F404142 :
-										(wr_reg_ptr == 16'd15) ? 32'h43444546 :
-										(wr_reg_ptr == 16'd16) ? 32'h4748494A :
-										(wr_reg_ptr == 16'd17) ? 32'h2B4C4D4E :*/
-										/*
-										(wr_reg_ptr == 16'd11) ? 32'h2B2B2B2B :
-										(wr_reg_ptr == 16'd12) ? 32'h2B2B2B2B :
-										(wr_reg_ptr == 16'd13) ? 32'h2B2B2B2B :
-										(wr_reg_ptr == 16'd14) ? 32'h2B2B2B2B :
-										(wr_reg_ptr == 16'd15) ? 32'h2B2B2B2B :
-										(wr_reg_ptr == 16'd16) ? 32'h2B2B2B2B :
-										(wr_reg_ptr == 16'd17) ? 32'h2B2B2B2B :*/
-										((wr_reg_ptr >= 16'd11) & (wr_reg_ptr < 16'd375)) ? 32'h2B2B2B2B :										
-										(wr_reg_ptr == 16'd375) ? 32'h2B2B2B2B :
-										32'h0000;
-	
-assign fifo4_wr_data_mux =		//ETHERNET 2
-										(wr_reg_ptr == 16'd0)  ? 4'b0001 :
-										(wr_reg_ptr == 16'd1)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd2)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd3)  ? 4'b0000 :
-										
-										//IP
-										(wr_reg_ptr == 16'd4)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd5)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd6)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd7)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd8)  ? 4'b0000 :
-										
-										//UDP	
-										(wr_reg_ptr == 16'd9)  ? 4'b0000 :
-										(wr_reg_ptr == 16'd10) ? 4'b0000 :
-										/*
-										(wr_reg_ptr == 16'd11) ? 4'b0000 :
-										(wr_reg_ptr == 16'd12) ? 4'b0000 :
-										(wr_reg_ptr == 16'd13) ? 4'b0000 :
-										(wr_reg_ptr == 16'd14) ? 4'b0000 :
-										(wr_reg_ptr == 16'd15) ? 4'b0000 :
-										(wr_reg_ptr == 16'd16) ? 4'b0000 :*/
-										((wr_reg_ptr >= 16'd11) & (wr_reg_ptr < 16'd375)) ? 4'b0000 :										
-										(wr_reg_ptr == 16'd375) ? 4'b0010 :
-										4'b0000;
 										
 //TIMER
 reg	[31:0]	timer_reg;
 wire				timer_pas;
 
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)													timer_reg <= 32'd250000000;				//2 sec
-	else if ((wr_reg_ptr == 16'd375) & wr_data_on)	timer_reg <= 32'd10;//32'd6250;
+	if (!rst_n)													timer_reg <= 32'd250_000_000;				//4
+	else if (udp_eop)											timer_reg <= 32'd250_000_000;				//4
 	else if (!timer_pas)										timer_reg <= timer_reg - 1'b1;
 	
 assign timer_pas = timer_reg == 0;
-										
-//POINTER
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)													wr_reg_ptr <= 16'b0;
-	else if ((wr_reg_ptr == 16'd375) & wr_data_on)	wr_reg_ptr <= 16'b0;
-	else if (wr_data_on)										wr_reg_ptr <= wr_reg_ptr + 1'b1;
-
-//DATA ENABLE
-//always @(posedge pll_62_5m_clk or negedge rst_n)
-//	if (!rst_n)												wr_data_en <= 1'b0;
-//	else if (!fifo4_wr_full & !fifo32_wr_full)	wr_data_en <= 1'b0;
-
-assign wr_data_on = !fifo4_wr_full & !fifo32_wr_full & timer_pas;
 	
-
-assign fifo4_wr_data_in = fifo4_wr_data_mux;
-assign fifo32_wr_data_in = fifo32_wr_data_mux;
-assign fifo4_wr_write = wr_data_on & !fifo4_wr_full;
-assign fifo32_wr_write = wr_data_on & !fifo32_wr_full;
+assign fifo4_wr_data_in = {udp_be_o, udp_eop, udp_sop};
+assign fifo32_wr_data_in = udp_data_o;
+assign fifo4_wr_write = udp_data_rdy_o & !fifo4_wr_full;
+assign fifo32_wr_write = udp_data_rdy_o & !fifo32_wr_full;
+assign udp_data_out_rd = udp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;
 
 //RESYNC CONTROL WRITE FIFO(CONTROLLER TO MAC)
 fifo4 fifo4_write_ctl

@@ -8,44 +8,80 @@ module eth_transmitter_arbiter #(parameter SOURCE_NUMBER = 1)
 	
 	
 );
+//					FIRST WR/RD				//				SECOND WR/RD				//
+//----------------------------------------------------------------------//
+//	BYTE0	//	BYTE1	//	BYTE2	//	BYTE3	//	BYTE4	//	BYTE5	//	BYTE6	//	BYTE7	//
+//----------------------------------------------------------------------//
 
 
 reg	[8*8 -1:0]	data_reg;
-reg	[2*4 -1:0]	be_reg;
-reg	[ 7:0]		data_be_reg;
+reg	[3:0]			cur_ptr;
+
 wire					data_rdy;
 wire	[31:0]		data_in_high;
 wire	[31:0]		data_in_low;
 wire					be_all;
 
-
-wire	[3:0]	be_high;
-wire	[3:0]	be_low;
-wire be_high_all;
-wire be_low_all;
-
-assign be_high_all = (be_high[3:0] == 0);
-assign be_low_all  = (be_low[3:0] == 0);
-
-//DATA HIGH BYTE[3]
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)										data_reg[7*8+:8] <= 0;
-	else if (data_rdy)							data_reg[7*8+:8] <= data_in_high[3*8+:8];
+	if (!rst_n) cur_ptr <= 4'b0;
+//	else if () cur_ptr <= 4'b0;
+
+/*
+//DATA BYTE[0]
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)										data_reg[0*8+:8] <= 0;
+	else if (data_rdy & be_high_all)			data_reg[0*8+:8] <= data_in_high[0*8+:8];
 	
-//DATA HIGH BYTE[2]
+//DATA BYTE[1]													
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)										data_reg[6*8+:8] <= 0;
+	if (!rst_n)										data_reg[1*8+:8] <= 0;
+	else if (data_rdy & (be_high_all | (be_high[1])))	
+														data_reg[1*8+:8] <= data_in_high[1*8+:8];
+														
+//DATA BYTE[2]
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)										data_reg[2*8+:8] <= 0;
 	else if (data_rdy & (be_high_all | (be_high[2])))	
-														data_reg[6*8+:8] <= data_in_high[2*8+:8];
-//DATA HIGH BYTE[1]													
+														data_reg[2*8+:8] <= data_in_high[2*8+:8];		
+			
+//DATA BYTE[3]
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)										data_reg[3*8+:8] <= 0;
+	else if (data_rdy)							data_reg[3*8+:8] <= data_in_high[3*8+:8];	
+
+//DATA BYTE[4]
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)										data_reg[4*8+:8] <= 0;
+	else if (data_rdy & be_high_all)			data_reg[4*8+:8] <= data_in_high[0*8+:8];	
+	
+//DATA BYTE[5]													
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)										data_reg[5*8+:8] <= 0;
 	else if (data_rdy & (be_high_all | (be_high[1])))	
 														data_reg[5*8+:8] <= data_in_high[1*8+:8];
-//DATA HIGH BYTE[0]
+														
+//DATA BYTE[6]
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)										data_reg[4*8+:8] <= 0;
-	else if (data_rdy & be_high_all)			data_reg[4*8+:8] <= data_in_high[0*8+:8];
+	if (!rst_n)										data_reg[6*8+:8] <= 0;
+	else if (data_rdy & (be_high_all | (be_high[2])))	
+														data_reg[6*8+:8] <= data_in_high[2*8+:8];													
+
+//DATA BYTE[7]
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)										data_reg[7*8+:8] <= 0;
+	else if (data_rdy)							data_reg[7*8+:8] <= data_in_high[3*8+:8];
+*/
+
+
+
+	
+
+	
+
+
+
+	
+
 
 
 /*
@@ -101,6 +137,8 @@ always @(posedge clk or negedge rst_n)
 */
 	
 	
+/*
+	
 //DATA BE LOW[3]
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)										data_be_reg[3] <= 1'b0;
@@ -117,7 +155,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)										data_be_reg[0] <= 1'b0;
 
-
+*/
 	
 
 
