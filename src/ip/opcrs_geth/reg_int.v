@@ -70,8 +70,9 @@ input							btn4
     RegCPUData U_0_001(Tx_Lwmark                ,7'd001,16'h0008,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_002(pause_frame_send_en      ,7'd002,16'h0000,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_003(pause_quanta_set         ,7'd003,16'h0000,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
+    RegCPUData U_0_004(IFGset                   ,7'd004,16'h0012,Reset,Clk_reg,!WRB,CSB,CA,16'h0012);
 //    RegCPUData U_0_004(IFGset                   ,7'd004,16'h000c,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
-    RegCPUData U_0_004(IFGset                   ,7'd018,16'h000c,Reset,Clk_reg,!WRB,CSB,CA,16'd18);
+//    RegCPUData U_0_004(IFGset                   ,7'd018,16'h000c,Reset,Clk_reg,!WRB,CSB,CA,16'd18);
     RegCPUData U_0_005(FullDuplex               ,7'd005,16'h0001,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_006(MaxRetry                 ,7'd006,16'h0002,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_007(MAC_tx_add_en            ,7'd007,16'h0000,Reset,Clk_reg,!WRB,CSB,CA,CD_in);

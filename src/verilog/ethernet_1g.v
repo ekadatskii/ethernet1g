@@ -632,7 +632,7 @@ transport_layer transport_layer
 //--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
 //--------------------------------------------------------------------------------//
-parameter UDP_DATA_LENGTH_IN_BYTE = 16'd1450;
+parameter UDP_DATA_LENGTH_IN_BYTE = 16'd1447;//16'd1450;
 
 wire	[47:0]		mac_dst_addr		= 48'hFF_FF_FF_FF_FF_FF;		//broadcast
 wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;		//
@@ -647,13 +647,13 @@ wire	[ 2:0]		ip_flag				= 3'h0;
 wire	[13:0]		ip_frag_offset		= 13'h00_00;		
 wire	[ 7:0]		ip_ttl				= 8'h80;				//128
 wire	[ 7:0]		ip_prot				= 8'h11;				//UDP
-wire	[15:0]		ip_head_chksum		= 16'h00_00;
+//wire	[15:0]		ip_head_chksum		= 16'h00_00;
 wire	[31:0]		ip_src_addr			= 32'hA9_FE_CE_77;		//169.254.206.119
-wire	[31:0]		ip_dst_addr			= 32'hA9_FE_CE_78;
+wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_64;
 wire	[31:0]		ip_options			= 32'h00_00_00_00;		//Not used now
 	
 wire	[15:0]		udp_src_port		= 16'hF718;			//63256
-wire	[15:0]		udp_dst_port		= 16'h1389;			//5001			
+wire	[15:0]		udp_dst_port		= 16'h1EA5;			//16'h1389;			//5001			
 wire	[15:0]		udp_data_length	= UDP_DATA_LENGTH_IN_BYTE;
 
 wire	[31:0]		udp_data_tr			= 32'h00_01_02_03;
@@ -671,34 +671,81 @@ wire					udp_data_out_rd;
 
 reg				start_reg;
 reg				start_lock;
+reg				udp_run;
+reg				udp_start;
+reg				udp_start_lock;
 reg	[31:0]	udp_data_gen;
 reg	[63:0]	udp_packet_num;
 reg	[ 3:0]	udp_content_chkr;
 
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					udp_packet_num <= 64'b0;
-	else if (udp_eop & udp_data_out_rd)
-					udp_packet_num <= udp_packet_num + 1'b1;	
+wire				udp_fifo_data_wr;
+reg	[15:0]	udp_fifo_data_wr_chkr;
+wire	[31:0]	udp_fifo_rdata;
 
+wire	[31:0]	udp_data_chksum_w;
+wire	[31:0]	udp_data_chksum_ww;
+wire	[15:0]	udp_data_chksum;
+reg	[15:0]	udp_data_chksum_r;
+
+//START AFTER WAIT
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									start_reg <= 1'b0;
+	else if (start_reg)							start_reg <= 1'b0;
+	else if (timer_pas & !start_lock)		start_reg <= 1'b1;
+	
+//START LOCK
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									start_lock <= 1'b0;
+	else if (udp_eop)								start_lock <= 1'b0;
+	else if (timer_pas)							start_lock <= 1'b1;
+	
+//RUN DATA SEND TO FIFO
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									udp_run <= 1'b0;
+	else if (udp_eop)								udp_run <= 1'b0;
+	else if (start_reg)							udp_run <= 1'b1;
+	
+assign udp_fifo_data_wr = udp_run & (udp_fifo_data_wr_chkr < UDP_DATA_LENGTH_IN_BYTE);
+
+//UDP DATA SEND TO FIFO COUNTER
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									udp_fifo_data_wr_chkr <= 16'b0;
+	else if (udp_eop)								udp_fifo_data_wr_chkr <= 16'b0;
+	else if (udp_fifo_data_wr)					udp_fifo_data_wr_chkr <= udp_fifo_data_wr_chkr + 4'd4;
+	
+//START SEND DATA FROM FIFO TO UDP TRANSMITTER
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									udp_start <= 1'b0;
+	else if (udp_start)							udp_start <= 1'b0;
+	else if ((udp_fifo_data_wr_chkr >= UDP_DATA_LENGTH_IN_BYTE) & !udp_start_lock)	
+														udp_start <= 1'b1;	
+//START LOCK
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									udp_start_lock <= 1'b0;
+	else if (udp_eop)								udp_start_lock <= 1'b0;
+	else if (udp_fifo_data_wr_chkr >= UDP_DATA_LENGTH_IN_BYTE)
+														udp_start_lock <= 1'b1;
+
+//UDP PACKET NUMBER OR UDP DATA SELECTOR
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
 					udp_content_chkr <= 4'd4;
 	else if (udp_eop & udp_data_out_rd)
 					udp_content_chkr <= 4'd4;
-	else if (udp_data_in_rd & (udp_content_chkr != 4'd2))
+	else if (udp_fifo_data_wr & (udp_content_chkr != 4'd2))
 					udp_content_chkr <= udp_content_chkr - 1'b1;	
 
+//UDP DATA GENERATOR				
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)	
 					udp_data_gen <= udp_packet_num;
 	else if (start_reg)
 					udp_data_gen <= udp_packet_num[63:32];
-	else if ((udp_content_chkr == 4'd4) & udp_data_in_rd)
+	else if ((udp_content_chkr == 4'd4) & udp_fifo_data_wr)
 					udp_data_gen <= udp_packet_num[31: 0];							
-	else if ((udp_content_chkr == 4'd3) & udp_data_in_rd)
+	else if ((udp_content_chkr == 4'd3) & udp_fifo_data_wr)
 					udp_data_gen <= udp_data_tr;							
-	else if ((udp_content_chkr == 4'd2) & udp_data_in_rd)	
+	else if ((udp_content_chkr == 4'd2) & udp_fifo_data_wr)	
 				begin
 					udp_data_gen[31:24] <= udp_data_gen[31:24] + 4'd4;
 					udp_data_gen[23:16] <= udp_data_gen[23:16] + 4'd4;
@@ -706,16 +753,40 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 					udp_data_gen[ 7: 0] <= udp_data_gen[ 7: 0] + 4'd4;
 				end
 
+//UDP PACKET NUMBER
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									start_reg <= 1'b0;
-	else if (start_reg)							start_reg <= 1'b0;
-	else if (timer_pas & !start_lock)		start_reg <= 1'b1;
+	if (!rst_n)
+					udp_packet_num <= 64'b0;
+	else if (udp_eop & udp_data_out_rd)
+					udp_packet_num <= udp_packet_num + 1'b1;	
+					
+//UDP DATA CRC
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)							udp_data_chksum_r <= 16'b0;
+	else if (start_reg)				udp_data_chksum_r <= 16'b0;
+	else if (udp_fifo_data_wr)		udp_data_chksum_r <= udp_data_chksum;
 	
+assign udp_data_chksum_w =	(udp_fifo_data_wr_chkr + 4'd1 == UDP_DATA_LENGTH_IN_BYTE) ? {udp_data_gen[31:24], 8'h00} : 
+									(udp_fifo_data_wr_chkr + 4'd2 == UDP_DATA_LENGTH_IN_BYTE) ?  udp_data_gen[31:16] : 
+									(udp_fifo_data_wr_chkr + 4'd3 == UDP_DATA_LENGTH_IN_BYTE) ? (udp_data_gen[31:16] + {udp_data_gen[15:8], 8'h00}) : (udp_data_gen[31:16] + udp_data_gen[15:0]);
+									
+assign udp_data_chksum_ww	= udp_data_chksum_w + udp_data_chksum_r[15:0];
+assign udp_data_chksum		= udp_data_chksum_ww[31:16] + udp_data_chksum_ww[15:0];
 
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									start_lock <= 1'b0;
-	else if (udp_eop)								start_lock <= 1'b0;
-	else if (timer_pas)							start_lock <= 1'b1;
+
+
+//FIFO TO COLLECT UDP DATA	
+umio_fifo #(2048, 32) umio_fifo
+(
+	.rst_n					(	rst_n					)
+	,.clk						(	pll_62_5m_clk		)
+	,.rd_data				(	udp_fifo_rdata		)
+	,.wr_data				(	udp_data_gen		)
+	,.rd_en					(	udp_data_in_rd		)
+	,.wr_en					(	udp_fifo_data_wr	)
+	,.full					(							)
+	,.empty					(							)
+);
 
 udp_full_transmitter udp_full_transmitter
 (
@@ -723,14 +794,14 @@ udp_full_transmitter udp_full_transmitter
 	,.rst_n					(	rst_n				)
 	
 	//control signals
-	,.start					(	start_reg		)
+	,.start					(	udp_start		)
 	
 	//output data + controls
 	,.data_out				(	udp_data_o		)
 	,.be_out					(	udp_be_o			)
 	,.data_out_rdy			(	udp_data_rdy_o	)
 	,.data_out_rd			(	udp_data_out_rd)
-	,.data_in				(	udp_data_gen	)
+	,.data_in				(	udp_fifo_rdata	)
 	,.data_in_rd			(	udp_data_in_rd	)
 	,.sop						(	udp_sop			)
 	,.eop						(	udp_eop			)
@@ -752,7 +823,7 @@ udp_full_transmitter udp_full_transmitter
 	,.ip_frag_offset		(	ip_frag_offset	)
 	,.ip_ttl					(	ip_ttl			)
 	,.ip_prot				(	ip_prot			)
-	,.ip_head_chksum		(	ip_head_chksum	)
+//	,.ip_head_chksum		(	ip_head_chksum	)
 	,.ip_src_addr			(	ip_src_addr		)
 	,.ip_dst_addr			(	ip_dst_addr		)
 	,.ip_options			(	ip_options		)
@@ -762,6 +833,7 @@ udp_full_transmitter udp_full_transmitter
 	,.udp_src_port			(	udp_src_port	)
 	,.udp_dst_port			(	udp_dst_port	)
 	,.udp_data_length		(	udp_data_length)
+	,.udp_data_chksum		(	udp_data_chksum_r)
 );
 
 										

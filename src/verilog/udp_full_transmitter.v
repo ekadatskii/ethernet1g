@@ -47,7 +47,7 @@ module udp_full_transmitter
 	,input	[13:0]		ip_frag_offset
 	,input	[ 7:0]		ip_ttl
 	,input	[ 7:0]		ip_prot
-	,input	[15:0]		ip_head_chksum		//TODO
+//	,input	[15:0]		ip_head_chksum		//TODO
 	,input	[31:0]		ip_src_addr
 	,input	[31:0]		ip_dst_addr
 	,input	[31:0]		ip_options
@@ -70,7 +70,7 @@ module udp_full_transmitter
 	,input	[15:0]		udp_src_port
 	,input	[15:0]		udp_dst_port
 	,input	[15:0]		udp_data_length
-//	,input	[15:0]		udp_chksum		TODO
+	,input	[15:0]		udp_data_chksum
 	
 	//input data
 /*	
@@ -88,6 +88,10 @@ module udp_full_transmitter
 	,input					udp_data_out_sel
 	,input					udp_data_out_rd
 	*/
+	
+	,output reg	[15:0]	crc_test1
+	,output reg	[15:0]	crc_test2
+	,output reg	[15:0]	crc_test3
 );
 
 
@@ -118,6 +122,13 @@ reg	[31:0]	ip_src_addr_r;
 reg	[31:0]	ip_dst_addr_r;
 reg	[31:0]	ip_options_r;
 
+wire	[31:0]	ip_head_chksum_w;
+wire	[15:0]	ip_head_chksum_ww;
+
+wire	[31:0]	pseudo_crc_sum_w;
+wire	[15:0]	pseudo_crc_sum_ww;
+
+
 //reg	[3 :0]	ip_head_ptr;
 
 //wire				ip_stop;
@@ -136,6 +147,12 @@ reg	[15:0]	udp_chksum_r;
 //reg	[16:0]	udp_data_ptr;
 
 wire				udp_stop;
+
+wire	[31:0]	udp_head_crc_sum_w;
+wire	[15:0]	udp_head_crc_sum_ww;
+
+wire	[31:0]	udp_full_crc_sum_w;
+wire	[15:0]	udp_full_crc_sum_ww;
 
 //--------------------------------
 
@@ -316,7 +333,10 @@ always @(posedge clk or negedge rst_n)
 //IP HEADER CHECKSUM REGISTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								ip_head_chksum_r <= 16'b0;
-	else if (start & !work_r)			ip_head_chksum_r <= ip_head_chksum;		//TODO
+	else if (start & !work_r)			ip_head_chksum_r <= ~ip_head_chksum_ww;
+	
+assign ip_head_chksum_w		= {ip_version, ip_head_len, ip_dsf} + ip_total_len + ip_id + {ip_flag, ip_frag_offset} + {ip_ttl, ip_prot} + ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0];
+assign ip_head_chksum_ww	= ip_head_chksum_w[31:16]+ ip_head_chksum_w[15:0];
 	
 //IP SOURCE ADDRESS REGISTER
 always @(posedge clk or negedge rst_n)
@@ -332,7 +352,21 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								ip_options_r <= 32'b0;
 	else if (start & !work_r)			ip_options_r <= ip_options;
+
+assign pseudo_crc_sum_w = ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0] + ip_prot[7:0] + (udp_data_length + 4'd8);
+assign pseudo_crc_sum_ww = pseudo_crc_sum_w[31:16] + pseudo_crc_sum_w[15:0];
 	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)								crc_test1 <= 16'b0;
+	else if (start & !work_r)			crc_test1 <= pseudo_crc_sum_ww;
+	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)								crc_test2 <= 16'b0;
+	else if (start & !work_r)			crc_test2 <= udp_head_crc_sum_ww;
+	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)								crc_test3 <= 16'b0;
+	else if (start & !work_r)			crc_test3 <= udp_data_chksum;
 //-------------------------------------------------------------------------------------------------------------
 
 //UDP SOURCE REGISTER
@@ -357,9 +391,21 @@ always @(posedge clk or negedge rst_n)
 	
 	
 //UDP CHECKSUM
-always @(posedge clk or negedge rst_n)			//TODO
-	if (!rst_n)	udp_chksum_r <= 16'b0;
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)								udp_chksum_r <= 16'b0;
+	else if (start & !work_r) 			udp_chksum_r <= ~udp_full_crc_sum_ww;
+	
 
+assign udp_head_crc_sum_w = udp_src_port[15:0] + udp_dst_port[15:0] + (udp_data_length + 4'd8);
+assign udp_head_crc_sum_ww = udp_head_crc_sum_w[31:16] + udp_head_crc_sum_w[15:0];
+	
+	
+assign udp_full_crc_sum_w = pseudo_crc_sum_ww[15:0] + udp_head_crc_sum_ww[15:0] + udp_data_chksum[15:0];
+assign udp_full_crc_sum_ww = udp_full_crc_sum_w[31:16] + udp_full_crc_sum_w[15:0];
+
+
+	
+	
 /*
 
 //UDP DATA POINTER
