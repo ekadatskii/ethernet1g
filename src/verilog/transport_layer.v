@@ -21,8 +21,8 @@ module transport_layer
 	,output				upper_op_end
 	,output	[31:0]	upper_data
 	,output	[15:0]	crc_sum_o
-
 	
+
 );
 
 //UDP FIELDS
@@ -39,14 +39,17 @@ reg				upper_op_r;
 reg				upper_op_stop_r;
 reg	[31:0]	upper_data_r;
 
-reg	[15:0]	crc_dat_r;
+reg	[31:0]	crc_dat_r;
 
 wire	[31:0]	crc_head_w;
-wire	[15:0]	crc_head_ww;
+wire	[31:0]	crc_head_ww;
+wire	[15:0]	crc_head_www;
 wire	[31:0]	crc_dat_w;
 wire	[31:0]	crc_dat_ww;
+wire	[15:0]	crc_dat_www;
 wire	[31:0]	crc_sum_w;
-wire	[15:0]	crc_sum_ww;
+wire	[31:0]	crc_sum_ww;
+wire	[15:0]	crc_sum_www;
 wire				udp_prot_w;
 
 assign udp_prot = prot_type == 8'd17;
@@ -81,6 +84,7 @@ always @(posedge clk or negedge rst_n)
 //CRC HEADER
 assign crc_head_w = source_port + dest_port + packet_length + packet_length + checksum;
 assign crc_head_ww = crc_head_w[31:16] + crc_head_w[15:0];
+assign crc_head_www = crc_head_ww[31:16] + crc_head_ww[15:0];
 
 //UDP DATA
 //-------------------------------------------------------------------------------
@@ -121,19 +125,21 @@ always @(posedge clk or negedge rst_n)
 																												
 //DATA CRC
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)													crc_dat_r <= 16'b0;
-	else if (rcv_op & rcv_op_st)							crc_dat_r <= 16'b0;
+	if (!rst_n)													crc_dat_r <= 32'b0;
+	else if (rcv_op & rcv_op_st)							crc_dat_r <= 32'b0;
 	else if (rcv_op & udp_prot & (word_cnt == 2) & (packet_length >= 9))
-																	crc_dat_r <= crc_dat_ww;
+																	crc_dat_r <= crc_dat_w;
 	else if (rcv_op & udp_prot & (word_cnt > 2) & (packet_length > (word_cnt << 2)))
-																	crc_dat_r <= crc_dat_ww;
+																	crc_dat_r <= crc_dat_w;
 	
 assign crc_dat_w = crc_dat_r + rcv_data[31:16] + rcv_data[15:0];
 assign crc_dat_ww = crc_dat_w[31:16] + crc_dat_w[15:0];
+assign crc_dat_www = crc_dat_ww[31:16] + crc_dat_ww[15:0];
 
 //CRC SUMMARY
-assign crc_sum_w = crc_head_ww + crc_dat_ww + pseudo_crc_sum;
+assign crc_sum_w = crc_head_www + crc_dat_www + pseudo_crc_sum;
 assign crc_sum_ww = crc_sum_w[31:16] + crc_sum_w[15:0];
+assign crc_sum_www = crc_sum_ww[31:16] + crc_sum_ww[15:0];
 
 
 //INOUTS
@@ -141,7 +147,7 @@ assign source_port_o		= source_port;
 assign dest_port_o		= dest_port;
 assign packet_length_o	= packet_length;
 assign checksum_o			= checksum;
-assign crc_sum_o			= crc_sum_ww;
+assign crc_sum_o			= crc_sum_www;
 
 assign upper_op_st		= upper_op_start_r;
 assign upper_op			= upper_op_r;

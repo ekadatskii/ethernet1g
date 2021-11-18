@@ -36,9 +36,10 @@ reg	[47:0]	upper_data_r;
 
 //WORD COUNTER
 always @(posedge clk or negedge rst_n)
-	if (!rst_n) 				word_cnt <= 16'b0;
-	else if (Rx_mac_eop)		word_cnt <= 16'b0;
-	else if (Rx_mac_pa)		word_cnt <= word_cnt + 1'b1;
+	if (!rst_n) 								word_cnt <= 16'b0;
+	else if (Rx_mac_eop)						word_cnt <= 16'b0;
+//	else if (Rx_mac_eop & Rx_mac_pa)		word_cnt <= 16'b0;	
+	else if (Rx_mac_pa)						word_cnt <= word_cnt + 1'b1;
 
 //DESTINATION
 always @(posedge clk or negedge rst_n)

@@ -31,7 +31,12 @@ module ethernet_1g
 		,input				Btn3
 		,input				Btn4
 		,input				Btn5
-		,input				Btn6		
+		,input				Btn6	
+	
+		//LEDS
+		,output				User_led1		
+		,output				User_led2
+		,output				User_led3	
 );
 
 //ALTERA GMII TO RGMII CONVERTER PARAMETERS
@@ -476,7 +481,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 	Rx_mac_eop_r <= 1'b0;
-	else 				Rx_mac_eop_r <= Rx_mac_eop;
+	else 				Rx_mac_eop_r <= Rx_mac_eop & Rx_mac_ra;
 
 //RESYNC FIFO(TRANCEIVER TO MAC)
 /*
@@ -621,18 +626,73 @@ transport_layer transport_layer
 	,.packet_length_o	()
 	,.checksum_o		()
 	
-	,.upper_op_st		()
-	,.upper_op			()
-	,.upper_op_end		()
-	,.upper_data		()
-	,.crc_sum_o			()
+	,.upper_op_st		(	udp_upper_op_st	)
+	,.upper_op			(	udp_upper_op		)
+	,.upper_op_end		(	udp_upper_op_end	)
+	,.upper_data		(	udp_upper_data		)
+	,.crc_sum_o			(	udp_crc_sum			)
 
 );
+
+wire 				udp_upper_op_st;
+wire 				udp_upper_op;
+wire 				udp_upper_op_end;
+wire	[31:0]	udp_upper_data;
+wire 	[15:0]	udp_crc_sum;
+
+reg	[15:0]	increment_cnt;
+reg	[15:0]	increment_data;
+reg	[7:0]		udp_data_cnt;
+reg				increment_err;
+reg				crc_err;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)							udp_data_cnt <= 8'b0;
+	else if (udp_upper_op_end)		udp_data_cnt <= 8'b0;
+	else if (udp_upper_op & (udp_data_cnt < 4))			
+											udp_data_cnt <= udp_data_cnt + 1'b1;
+					
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)							increment_data <= 16'b0;
+	else if (udp_data_cnt == 8'd3)increment_data <= udp_upper_data[31:16];	
+
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 						increment_cnt <= 16'b0;
+	else if (udp_upper_op_end)		increment_cnt <= increment_cnt + 1'b1;
+	
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 																	increment_err <= 1'b0;
+	else if (udp_upper_op_end & (increment_data != increment_cnt))	increment_err <= 1'b1;
+	
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 																	crc_err <= 1'b0;
+	else if (udp_upper_op_end & (udp_crc_sum != 16'hFFFF))			crc_err <= 1'b1;
+
+reg [31:0] 	led_timer;
+reg			led_on;
+wire			led_timer_pas;
+	
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)													led_timer <= 32'd125_000_000;				//2
+	else if (udp_upper_op)									led_timer <= 32'd125_000_000;				//2
+	else if (!led_timer_pas)								led_timer <= led_timer - 1'b1;
+	
+assign led_timer_pas = led_timer == 0;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)						led_on <= 1'b0;			//OFF
+	else if (udp_upper_op)		led_on <= 1'b1;
+	else if (led_timer_pas)		led_on <= 1'b0;
+	
+assign User_led1 = !led_on;	
+assign User_led2 = !increment_err;
+assign User_led3 = !crc_err;
 
 //--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
 //--------------------------------------------------------------------------------//
-parameter UDP_DATA_LENGTH_IN_BYTE = 16'd1447;//16'd1450;
+parameter UDP_DATA_LENGTH_IN_BYTE = 16'd1446;//16'd1450;
 
 wire	[47:0]		mac_dst_addr		= 48'hFF_FF_FF_FF_FF_FF;		//broadcast
 wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;		//
@@ -649,7 +709,8 @@ wire	[ 7:0]		ip_ttl				= 8'h80;				//128
 wire	[ 7:0]		ip_prot				= 8'h11;				//UDP
 //wire	[15:0]		ip_head_chksum		= 16'h00_00;
 wire	[31:0]		ip_src_addr			= 32'hA9_FE_CE_77;		//169.254.206.119
-wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_64;
+//wire	[31:0]		ip_src_addr			= 32'hFF_FF_FF_FF;
+wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_4F;
 wire	[31:0]		ip_options			= 32'h00_00_00_00;		//Not used now
 	
 wire	[15:0]		udp_src_port		= 16'hF718;			//63256
@@ -842,8 +903,8 @@ reg	[31:0]	timer_reg;
 wire				timer_pas;
 
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)													timer_reg <= 32'd250_000_000;				//4
-	else if (udp_eop)											timer_reg <= 32'd250_000_000;				//4
+	if (!rst_n)													timer_reg <= 32'd25_000_000;				//0.4
+	else if (udp_eop)											timer_reg <= 32'd0;//32'd25_000_000;				//0.4
 	else if (!timer_pas)										timer_reg <= timer_reg - 1'b1;
 	
 assign timer_pas = timer_reg == 0;

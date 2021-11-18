@@ -61,8 +61,8 @@
 // Revision 1.1.1.1  2005/12/13 01:51:45  Administrator
 // no message
 //                                           
-`define MAC_TX_FF_DEPTH 12
-`define MAC_RX_FF_DEPTH 12    
+`define MAC_TX_FF_DEPTH 9
+`define MAC_RX_FF_DEPTH 9    
 
 module MAC_rx_FF (
 Reset       ,                                                                                                                                             
@@ -77,6 +77,9 @@ Fifo_data_end   ,
 
 Current_state_SYS_o,
 Next_state_SYS_o,
+
+//Test signal
+ptr_eq,
  
 //CPU
 Rx_Hwmark,
@@ -115,6 +118,8 @@ output  [1:0]   Rx_mac_BE   ;
 output          Rx_mac_pa   ;
 output          Rx_mac_sop  ;
 output          Rx_mac_eop  ;
+
+output				ptr_eq;
 
 //******************************************************************************
 //internal signals                                                              
@@ -188,6 +193,7 @@ wire            Packet_number_add_edge;
 reg             Packet_number_add_dl1;
 reg             Packet_number_add_dl2;
 reg             Packet_number_add ;
+reg             Packet_number_add2 ;
 reg             Packet_number_add_tmp    ;
 reg             Packet_number_add_tmp_dl1;
 reg             Packet_number_add_tmp_dl2;
@@ -486,6 +492,15 @@ always @ (posedge Clk_MAC or posedge Reset)
         Packet_number_add   <=0;
  
  
+//Add by User
+always @ (posedge Clk_MAC or posedge Reset or posedge Packet_number_add_dl1)
+		if (Reset)
+			Packet_number_add2	<=0;
+		else if (Packet_number_add_dl1)
+			Packet_number_add2	<=0;
+		else if (Packet_number_add_tmp_dl1)	
+			Packet_number_add2	<=1;
+ 
  
  
  
@@ -566,7 +581,7 @@ always @ (posedge Clk_SYS or posedge Reset)
         end
     else 
         begin
-        Packet_number_add_dl1   <=Packet_number_add;
+        Packet_number_add_dl1   <=Packet_number_add2;
         Packet_number_add_dl2   <=Packet_number_add_dl1;
         end
 assign  Packet_number_add_edge=Packet_number_add_dl1&!Packet_number_add_dl2;
@@ -589,7 +604,10 @@ always @ (posedge Clk_SYS or posedge Reset)
     if (Reset)                                                                                      
         Fifo_data_count     <=0;                                                                    
     else                                                                                            
-        Fifo_data_count     <=Add_wr_ungray[`MAC_RX_FF_DEPTH-1:`MAC_RX_FF_DEPTH-5]-Add_rd[`MAC_RX_FF_DEPTH-1:`MAC_RX_FF_DEPTH-5]; 
+        Fifo_data_count     <=Add_wr_ungray[`MAC_RX_FF_DEPTH-1:`MAC_RX_FF_DEPTH-5]-Add_rd[`MAC_RX_FF_DEPTH-1:`MAC_RX_FF_DEPTH-5];
+		 
+//Test signal		 
+assign ptr_eq = Add_wr_ungray == Add_rd;
 
 always @ (posedge Clk_SYS or posedge Reset)                                                         
     if (Reset) 

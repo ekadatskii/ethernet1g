@@ -58,7 +58,8 @@ reg	[15:0]	crc_sum_r;
 wire	[31:0]	crc_sum_w;
 wire	[31:0]	crc_sum_ww;
 wire	[31:0]	pseudo_crc_sum_w;
-wire	[15:0]	pseudo_crc_sum_ww;
+wire	[31:0]	pseudo_crc_sum_ww;
+wire	[15:0]	pseudo_crc_sum_www;
 wire				upper_op_run_w;
 
 //WORD COUNTER
@@ -142,6 +143,7 @@ assign crc_sum_ww = crc_sum_w[15:0] + crc_sum_w[31:16];
 //PSEUDOHEADER CRC
 assign pseudo_crc_sum_w = source_addr[31:16] + source_addr[15:0] + dest_addr[31:16] + dest_addr[15:0] + prot_type[7:0];
 assign pseudo_crc_sum_ww = pseudo_crc_sum_w[31:16] + pseudo_crc_sum_w[15:0];
+assign pseudo_crc_sum_www = pseudo_crc_sum_ww[31:16] + pseudo_crc_sum_ww[15:0];
 
 //TRANSPORT PROCESS(UPPER LEVEL)
 //-------------------------------------------------------------------------------	
@@ -191,7 +193,7 @@ assign checksum_o			= checksum;
 assign source_addr_o		= source_addr;
 assign dest_addr_o		= dest_addr;
 assign crc_sum_o			= crc_sum_r;
-assign pseudo_crc_sum_o = pseudo_crc_sum_ww;
+assign pseudo_crc_sum_o = pseudo_crc_sum_www;
 	
 assign upper_op_st		= upper_op_start_r;
 assign upper_op			= upper_op_r;
