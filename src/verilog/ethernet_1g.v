@@ -694,7 +694,7 @@ assign User_led3 = !crc_err;
 //--------------------------------------------------------------------------------//
 parameter UDP_DATA_LENGTH_IN_BYTE = 16'd1446;//16'd1450;
 
-wire	[47:0]		mac_dst_addr		= 48'hFF_FF_FF_FF_FF_FF;		//broadcast
+wire	[47:0]		mac_dst_addr		= 48'h04_D4_C4_A5_A8_E0;//48'hFF_FF_FF_FF_FF_FF;		//broadcast
 wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;		//
 wire	[15:0]		mac_type				= 16'h08_00;
 
@@ -708,7 +708,7 @@ wire	[13:0]		ip_frag_offset		= 13'h00_00;
 wire	[ 7:0]		ip_ttl				= 8'h80;				//128
 wire	[ 7:0]		ip_prot				= 8'h11;				//UDP
 //wire	[15:0]		ip_head_chksum		= 16'h00_00;
-wire	[31:0]		ip_src_addr			= 32'hA9_FE_CE_77;		//169.254.206.119
+wire	[31:0]		ip_src_addr			= 32'hC1_E8_1A_4E; //193.232.26.78 //= 32'hA9_FE_CE_77;		//169.254.206.119
 //wire	[31:0]		ip_src_addr			= 32'hFF_FF_FF_FF;
 wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_4F;
 wire	[31:0]		ip_options			= 32'h00_00_00_00;		//Not used now
@@ -718,6 +718,9 @@ wire	[15:0]		udp_dst_port		= 16'h1EA5;			//16'h1389;			//5001
 wire	[15:0]		udp_data_length	= UDP_DATA_LENGTH_IN_BYTE;
 
 wire	[31:0]		udp_data_tr			= 32'h00_01_02_03;
+
+wire	[31:0]		usb_prot_head0		= 32'h5E4D0B05;
+wire	[15:0]		usb_prot_head1		= 32'h9FB4;
 
 //OUTPUTS
 wire	[31:0]		udp_data_o;
@@ -795,17 +798,49 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 					udp_content_chkr <= 4'd4;
 	else if (udp_fifo_data_wr & (udp_content_chkr != 4'd2))
 					udp_content_chkr <= udp_content_chkr - 1'b1;	
+				
+reg	[7:0]		usb_crc8_reg;
+wire	[7:0]		usb_crc8_w1;
+wire	[7:0]		usb_crc8_w2;
+				
+// CRC8 DATA
+crc8_ftdi crc8_data_high
+(
+	.data_i		(	udp_packet_num[15:8]	),
+	.crc_i		(	8'h1B						),
+	.crc_o		(	usb_crc8_w1				)
+);	
+
+crc8_ftdi crc8_data_low
+(
+	.data_i		(	udp_packet_num[7:0]	),
+	.crc_i		(	usb_crc8_w1				),
+	.crc_o		(	usb_crc8_w2				)
+);
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)					usb_crc8_reg <= 8'h00;
+	else if (start_reg)		usb_crc8_reg <= 8'hC6;//usb_crc8_w2;
+				
 
 //UDP DATA GENERATOR				
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)	
 					udp_data_gen <= udp_packet_num;
 	else if (start_reg)
-					udp_data_gen <= udp_packet_num[63:32];
+					udp_data_gen <= usb_prot_head0;//udp_packet_num[63:32];
 	else if ((udp_content_chkr == 4'd4) & udp_fifo_data_wr)
-					udp_data_gen <= udp_packet_num[31: 0];							
+					udp_data_gen <= {usb_prot_head1, udp_packet_num[15:0]};//udp_packet_num[31: 0];
 	else if ((udp_content_chkr == 4'd3) & udp_fifo_data_wr)
-					udp_data_gen <= udp_data_tr;							
+					udp_data_gen <= udp_data_tr;	
+	else if ((udp_content_chkr == 4'd2) & udp_fifo_data_wr & (udp_fifo_data_wr_chkr == 16'd1440))
+				begin
+					udp_data_gen[31:24] <= udp_data_gen[31:24] + 4'd4;
+					udp_data_gen[23:16] <= udp_data_gen[23:16] + 4'd4;//usb_crc8_reg;//8'h00;//8'hDD;
+					udp_data_gen[15: 8] <= 8'h00;
+					udp_data_gen[ 7: 0] <= 8'h00;
+				end	
+	
 	else if ((udp_content_chkr == 4'd2) & udp_fifo_data_wr)	
 				begin
 					udp_data_gen[31:24] <= udp_data_gen[31:24] + 4'd4;
@@ -903,8 +938,8 @@ reg	[31:0]	timer_reg;
 wire				timer_pas;
 
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)													timer_reg <= 32'd25_000_000;				//0.4
-	else if (udp_eop)											timer_reg <= 32'd0;//32'd25_000_000;				//0.4
+	if (!rst_n)													timer_reg <= 32'd250_000_000;				//0.4
+	else if (udp_eop)											timer_reg <= 32'd250_000_000;//32'd10_000;//32'd40_000;//32'd25_000_000;				//0.4
 	else if (!timer_pas)										timer_reg <= timer_reg - 1'b1;
 	
 assign timer_pas = timer_reg == 0;

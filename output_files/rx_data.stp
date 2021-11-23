@@ -6,12 +6,12 @@
     <node_ip_info instance_id="0" mfg_id="110" node_id="0" version="6"/>
     <position_info>
       <single attribute="active tab" value="0"/>
-      <single attribute="data horizontal scroll position" value="0"/>
+      <single attribute="data horizontal scroll position" value="109"/>
       <single attribute="data vertical scroll position" value="15"/>
       <single attribute="setup horizontal scroll position" value="0"/>
       <single attribute="setup vertical scroll position" value="16"/>
       <single attribute="zoom level denominator" value="1"/>
-      <single attribute="zoom level numerator" value="512"/>
+      <single attribute="zoom level numerator" value="1024"/>
       <single attribute="zoom offset denominator" value="1"/>
       <single attribute="zoom offset numerator" value="0"/>
       <multi attribute="timebars" size="3" value="532,512,527"/>
