@@ -72,6 +72,15 @@ module udp_full_transmitter
 	,input	[15:0]		udp_data_length
 	,input	[15:0]		udp_data_chksum
 	
+	
+	,input	[31:0]		tcp_seq_num
+	,input	[31:0]		tcp_ack_num
+	,input	[ 3:0]		tcp_head_len
+	,input	[ 5:0]		tcp_flags
+	,input	[15:0]		tcp_window
+	,input	[15:0]		tcp_urgent_ptr
+	,input	[95:0]		tcp_options
+	
 	//input data
 /*	
 	,input	[31:0]		udp_data_in
@@ -91,7 +100,9 @@ module udp_full_transmitter
 	
 	,output reg	[15:0]	crc_test1
 	,output reg	[15:0]	crc_test2
-	,output reg	[15:0]	crc_test3
+	,output reg	[31:0]	crc_test3
+	,output reg	[31:0]	crc_test4
+	,output reg	[31:0]	crc_test5
 );
 
 
@@ -123,10 +134,12 @@ reg	[31:0]	ip_dst_addr_r;
 reg	[31:0]	ip_options_r;
 
 wire	[31:0]	ip_head_chksum_w;
-wire	[15:0]	ip_head_chksum_ww;
+wire	[31:0]	ip_head_chksum_ww;
+wire	[15:0]	ip_head_chksum_www;
 
 wire	[31:0]	pseudo_crc_sum_w;
-wire	[15:0]	pseudo_crc_sum_ww;
+wire	[31:0]	pseudo_crc_sum_ww;
+wire	[15:0]	pseudo_crc_sum_www;
 
 
 //reg	[3 :0]	ip_head_ptr;
@@ -146,13 +159,23 @@ reg	[15:0]	udp_chksum_r;
 
 //reg	[16:0]	udp_data_ptr;
 
+reg	[31:0]		tcp_seq_num_r;
+reg	[31:0]		tcp_ack_num_r;
+reg	[ 3:0]		tcp_head_len_r;
+reg	[ 5:0]		tcp_flags_r;
+reg	[15:0]		tcp_window_r;
+reg	[15:0]		tcp_urgent_ptr_r;
+reg	[95:0]		tcp_options_r;
+
 wire				udp_stop;
 
 wire	[31:0]	udp_head_crc_sum_w;
-wire	[15:0]	udp_head_crc_sum_ww;
+wire	[31:0]	udp_head_crc_sum_ww;
+wire	[15:0]	udp_head_crc_sum_www;
 
 wire	[31:0]	udp_full_crc_sum_w;
-wire	[15:0]	udp_full_crc_sum_ww;
+wire	[31:0]	udp_full_crc_sum_ww;
+wire	[15:0]	udp_full_crc_sum_www;
 
 //--------------------------------
 
@@ -182,7 +205,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)				head_ph <= 1'b0;
 	else if (start)		head_ph <= 1'b1;
-	else if ((head_ptr == 16'd10) & data_out_rd)
+	else if ((head_ptr == (16'd8 + tcp_head_len_r)) & data_out_rd)
 								head_ph <= 1'b0;
 	
 //HEADER POINTER
@@ -198,7 +221,6 @@ assign sop = work_r & (head_ptr == 16'd0);
 assign eop = stop;
 
 
-
 assign data_out	 		=	(head_ptr == 16'd0)  ? mac_dst_addr_r[47:16]:
 									(head_ptr == 16'd1)  ? {mac_dst_addr_r[15: 0], mac_src_addr_r[47:32]}:
 									(head_ptr == 16'd2)  ? mac_src_addr_r[31:0]:
@@ -208,36 +230,38 @@ assign data_out	 		=	(head_ptr == 16'd0)  ? mac_dst_addr_r[47:16]:
 									(head_ptr == 16'd6)  ? {ip_head_chksum_r, ip_src_addr_r[31:16]}:
 									(head_ptr == 16'd7)  ? {ip_src_addr_r[15:0], ip_dst_addr_r[31:16]}:
 									(head_ptr == 16'd8)  ? {ip_dst_addr_r[15:0], udp_src_port_r}:
-									(head_ptr == 16'd9)  ? {udp_dst_port_r[15:0], udp_length_r}:
-									(head_ptr == 16'd10) ? {udp_chksum_r[15:0], data_r[63:48]}:
-									(head_ptr == 16'd11) ? {data_r[63:32]}:
+									(head_ptr == 16'd9)  ? {udp_dst_port_r[15:0], tcp_seq_num[31:16]}:
+									(head_ptr == 16'd10) ? {tcp_seq_num[15:0], tcp_ack_num[31:16]}:
+									(head_ptr == 16'd11) ? {tcp_ack_num[15:0], tcp_head_len, 6'b0 ,tcp_flags}:
+									(head_ptr == 16'd12) ? {tcp_window, udp_chksum_r}:								
+									((head_ptr == 16'd13) & (tcp_head_len_r >= 4'd6)) ? {tcp_urgent_ptr, tcp_options[95:80]}:
+									((head_ptr == 16'd13) & (tcp_head_len_r == 4'd5)) ? {tcp_urgent_ptr, data_r[63:48]}:
+									((head_ptr == 16'd14) & (tcp_head_len_r >= 4'd7)) ? {tcp_options[79:48]}:
+									((head_ptr == 16'd14) & (tcp_head_len_r == 4'd6)) ? {tcp_options[79:64], data_r[63:48]}:
+									((head_ptr == 16'd15) & (tcp_head_len_r >= 4'd8)) ? {tcp_options[47:16]}:
+									((head_ptr == 16'd15) & (tcp_head_len_r == 4'd7)) ? {tcp_options[47:32], data_r[63:48]}:
+									((head_ptr == 16'd16) & (tcp_head_len_r == 4'd8)) ? {tcp_options[15:0], data_r[63:48]}:
+									(head_ptr == (16'd8 + 16'd1 + tcp_head_len_r)) ? {data_r[63:32]}:
 									32'h0;									
 									
-assign be_out		 		=	(head_ptr == 4'd0)  ? 2'b00:
-									(head_ptr == 4'd1)  ? 2'b00:
-									(head_ptr == 4'd2)  ? 2'b00:
-									(head_ptr == 4'd3)  ? 2'b00:
-									(head_ptr == 4'd4)  ? 2'b00:
-									(head_ptr == 4'd5)  ? 2'b00:
-									(head_ptr == 4'd6)  ? 2'b00:
-									(head_ptr == 4'd7)  ? 2'b00:
-									(head_ptr == 4'd8)  ? 2'b00:
-									(head_ptr == 4'd9)  ? 2'b00:
-									((head_ptr == 4'd10) & (udp_data_length_r == 16'd0)) ? 2'b10:
-									((head_ptr == 4'd10) & (udp_data_length_r == 16'd1)) ? 2'b11:
-									(head_ptr == 4'd10) ? 2'b00:
-									((head_ptr == 4'd11) & (data_out_ptr + 4'd1 == udp_data_length_r)) ? 2'b01:
-									((head_ptr == 4'd11) & (data_out_ptr + 4'd2 == udp_data_length_r)) ? 2'b10:
-									((head_ptr == 4'd11) & (data_out_ptr + 4'd3 == udp_data_length_r)) ? 2'b11:
-									(head_ptr == 4'd11) ? 2'b00:
+assign be_out		 		=	(head_ptr <= (16'd8  - 16'd1 + tcp_head_len_r))  ? 2'b00:									
+									((head_ptr == (16'd8 + tcp_head_len_r)) & (udp_data_length_r == 16'd0)) ? 2'b10:
+									((head_ptr == (16'd8 + tcp_head_len_r)) & (udp_data_length_r == 16'd1)) ? 2'b11:
+									(head_ptr  == (16'd8 + tcp_head_len_r)) ? 2'b00:
+									((head_ptr == (16'd8 + 16'd1 + tcp_head_len_r)) & (data_out_ptr + 4'd1 == udp_data_length_r)) ? 2'b01:
+									((head_ptr == (16'd8 + 16'd1 + tcp_head_len_r)) & (data_out_ptr + 4'd2 == udp_data_length_r)) ? 2'b10:
+									((head_ptr == (16'd8 + 16'd1 + tcp_head_len_r)) & (data_out_ptr + 4'd3 == udp_data_length_r)) ? 2'b11:
+									(head_ptr  == (16'd8 + 16'd1 + tcp_head_len_r)) ? 2'b00:
 									2'b00;	
 									
 //DATA OUT POINTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)															data_out_ptr <= 16'b0;
 	else if (stop)														data_out_ptr <= 16'b0;
-	else if (work_r & data_out_rd & (head_ptr == 16'd10))	data_out_ptr <= data_out_ptr + 4'd2;
-	else if (work_r & data_out_rd & (head_ptr >= 16'd11))	data_out_ptr <= data_out_ptr + 4'd4;
+	else if (work_r & data_out_rd & (head_ptr == (16'd8 + tcp_head_len_r)))	
+																			data_out_ptr <= data_out_ptr + 4'd2;
+	else if (work_r & data_out_rd & (head_ptr == (16'd8 + 16'd1 + tcp_head_len_r)))	
+																			data_out_ptr <= data_out_ptr + 4'd4;
 
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)			data_out_rdy_r <= 1'b0;
@@ -248,14 +272,14 @@ assign data_out_rdy = data_out_rdy_r;
 
 //UDP DATA REG
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)																			data_r <= 64'b0;
-	else if (stop)																		data_r <= 64'b0;
-	else if ((head_ptr == 16'd8)  & data_out_rd/*TODO IF NO DATA*/)	data_r[63:32] <= data_in;
-	else if ((head_ptr == 16'd9)  & data_out_rd/*TODO IF NO DATA*/)	data_r[31: 0] <= data_in;
-	else if ((head_ptr == 16'd10) & data_out_rd/*TODO IF NO DATA*/)	data_r[63:16] <= data_r[47:0];
-	else if ((head_ptr == 16'd11) & data_out_rd/*TODO IF NO DATA*/)	data_r[63:16] <= {data_r[31:16], data_in};
-	
-assign stop = work_r & data_out_rd & (((head_ptr == 16'd10) & (udp_data_length_r <= 16'd2)) | ((head_ptr >= 16'd11) & (data_out_ptr + 4'd4 >= udp_data_length_r)));
+	if (!rst_n)													data_r <= 64'b0;
+	else if (stop)												data_r <= 64'b0;
+	else if ((head_ptr == 16'd10) & data_out_rd)		data_r[63:32] <= data_in;
+	else if ((head_ptr == 16'd11) & data_out_rd)		data_r[31: 0] <= data_in;
+	else if ((head_ptr == (16'd8 + tcp_head_len_r)) & data_out_rd )			data_r[63:16] <= data_r[47:0];
+	else if ((head_ptr == (16'd8 + 16'd1 + tcp_head_len_r)) & data_out_rd )	data_r[63:16] <= {data_r[31:16], data_in};
+
+assign stop = work_r & data_out_rd & (((head_ptr == (16'd8 + tcp_head_len_r)) & (udp_data_length_r <= 16'd2)) | ((head_ptr >= (16'd8 + 16'd1 + tcp_head_len_r)) & (data_out_ptr + 4'd4 >= udp_data_length_r)));
 
 //DATA IN POINTER
 always @(posedge clk or negedge rst_n)
@@ -264,7 +288,7 @@ always @(posedge clk or negedge rst_n)
 	else if (work_r & data_in_rd)	data_in_ptr <= data_in_ptr + 4'd4;
 
 
-assign data_in_rd = ((head_ptr == 16'd8) | (head_ptr == 16'd9) | (head_ptr == 16'd11)) & (data_in_ptr < udp_data_length_r) & data_out_rd;
+assign data_in_rd = ((head_ptr == 16'd10) | (head_ptr == 16'd11) | (head_ptr == (16'd8 + 16'd1 + tcp_head_len_r))) & (data_in_ptr < udp_data_length_r) & data_out_rd;
 	
 //-------------------------------------------------------------------------------------------------------------	
 
@@ -333,10 +357,11 @@ always @(posedge clk or negedge rst_n)
 //IP HEADER CHECKSUM REGISTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								ip_head_chksum_r <= 16'b0;
-	else if (start & !work_r)			ip_head_chksum_r <= ~ip_head_chksum_ww;
+	else if (start & !work_r)			ip_head_chksum_r <= ~ip_head_chksum_www;
 	
 assign ip_head_chksum_w		= {ip_version, ip_head_len, ip_dsf} + ip_total_len + ip_id + {ip_flag, ip_frag_offset} + {ip_ttl, ip_prot} + ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0];
 assign ip_head_chksum_ww	= ip_head_chksum_w[31:16]+ ip_head_chksum_w[15:0];
+assign ip_head_chksum_www	= ip_head_chksum_ww[31:16]+ ip_head_chksum_ww[15:0];
 	
 //IP SOURCE ADDRESS REGISTER
 always @(posedge clk or negedge rst_n)
@@ -353,8 +378,9 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)								ip_options_r <= 32'b0;
 	else if (start & !work_r)			ip_options_r <= ip_options;
 
-assign pseudo_crc_sum_w = ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0] + ip_prot[7:0] + (udp_data_length + 4'd8);
+assign pseudo_crc_sum_w = ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0] + ip_prot[7:0] + (udp_data_length + tcp_head_len * 4'd4);
 assign pseudo_crc_sum_ww = pseudo_crc_sum_w[31:16] + pseudo_crc_sum_w[15:0];
+assign pseudo_crc_sum_www = pseudo_crc_sum_ww[31:16] + pseudo_crc_sum_ww[15:0];
 	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								crc_test1 <= 16'b0;
@@ -365,8 +391,21 @@ always @(posedge clk or negedge rst_n)
 	else if (start & !work_r)			crc_test2 <= udp_head_crc_sum_ww;
 	
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)								crc_test3 <= 16'b0;
-	else if (start & !work_r)			crc_test3 <= udp_data_chksum;
+	if (!rst_n)								crc_test3 <= 32'b0;
+	else if (start & !work_r)			crc_test3 <= udp_src_port[15:0] + udp_dst_port[15:0] + tcp_seq_num[31:16] + tcp_seq_num[15:0] + tcp_ack_num[31:16] + tcp_ack_num[15:0];
+	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)								crc_test4 <= 32'b0;
+	else if (start & !work_r)			crc_test4 <= {tcp_head_len, 6'b0, tcp_flags} + tcp_window + tcp_urgent_ptr;
+	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)								crc_test5 <= 32'b0;
+	else if (start & !work_r)			crc_test5 <= ((tcp_head_len >= 4'd8) ? tcp_options[95:80] : 16'h0) 
+									+ ((tcp_head_len >= 4'd8) ? tcp_options[79:64] : 16'h0)
+									+ ((tcp_head_len >= 4'd7) ? tcp_options[63:48] : 16'h0)
+									+ ((tcp_head_len >= 4'd7) ? tcp_options[47:32] : 16'h0)
+									+ ((tcp_head_len >= 4'd6) ? tcp_options[31:16] : 16'h0)
+									+ ((tcp_head_len >= 4'd6) ? tcp_options[15: 0] : 16'h0);
 //-------------------------------------------------------------------------------------------------------------
 
 //UDP SOURCE REGISTER
@@ -389,82 +428,69 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)									udp_data_length_r <= 16'b0;
 	else if (start & !work_r)				udp_data_length_r <= udp_data_length;
 	
+//TCP SEQUENCE NUMBER REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									tcp_seq_num_r <= 32'b0;
+	else if (start & !work_r)				tcp_seq_num_r <= tcp_seq_num;
 	
+//TCP ACKNOWLEDGE NUMBER REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									tcp_ack_num_r <= 32'b0;
+	else if (start & !work_r)				tcp_ack_num_r <= tcp_ack_num;
+	
+//TCP HEADER LENGTH NUMBER REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									tcp_head_len_r <= 4'b0;
+	else if (start & !work_r)				tcp_head_len_r <= tcp_head_len;
+	
+//TCP FLAGS REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									tcp_flags_r <= 6'b0;
+	else if (start & !work_r)				tcp_flags_r <= tcp_flags;
+	
+//TCP WINDOWS REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									tcp_window_r <= 16'b0;
+	else if (start & !work_r)				tcp_window_r <= tcp_window;
+	
+//TCP URGENT POUNTER REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									tcp_urgent_ptr_r <= 16'b0;
+	else if (start & !work_r)				tcp_urgent_ptr_r <= tcp_urgent_ptr;
+	
+//TCP OPTIONS REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									tcp_options_r <= 96'b0;
+	else if (start & !work_r & (tcp_head_len == 4'd8))
+													tcp_options_r <= tcp_options;
+	else if (start & !work_r & (tcp_head_len == 4'd7))
+													tcp_options_r <= {tcp_options[95:32], 32'b0};											
+	else if (start & !work_r & (tcp_head_len == 4'd6))
+													tcp_options_r <= {tcp_options[95:64], 64'b0};	
+	else if (start & !work_r & (tcp_head_len == 4'd5))
+													tcp_options_r <= 96'b0;
+
 //UDP CHECKSUM
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								udp_chksum_r <= 16'b0;
-	else if (start & !work_r) 			udp_chksum_r <= ~udp_full_crc_sum_ww;
+	else if (start & !work_r) 			udp_chksum_r <= ~udp_full_crc_sum_www;
 	
+assign udp_head_crc_sum_w = udp_src_port[15:0] + udp_dst_port[15:0] + tcp_seq_num[31:16] + tcp_seq_num[15:0] + tcp_ack_num[31:16] + tcp_ack_num[15:0] + {tcp_head_len, 6'b0, tcp_flags} 
+									+ tcp_window + tcp_urgent_ptr 
+									+ ((tcp_head_len >= 4'd8) ? tcp_options[95:80] : 16'h0) 
+									+ ((tcp_head_len >= 4'd8) ? tcp_options[79:64] : 16'h0)
+									+ ((tcp_head_len >= 4'd7) ? tcp_options[63:48] : 16'h0)
+									+ ((tcp_head_len >= 4'd7) ? tcp_options[47:32] : 16'h0)
+									+ ((tcp_head_len >= 4'd6) ? tcp_options[31:16] : 16'h0)
+									+ ((tcp_head_len >= 4'd6) ? tcp_options[15: 0] : 16'h0);
 
-assign udp_head_crc_sum_w = udp_src_port[15:0] + udp_dst_port[15:0] + (udp_data_length + 4'd8);
 assign udp_head_crc_sum_ww = udp_head_crc_sum_w[31:16] + udp_head_crc_sum_w[15:0];
+assign udp_head_crc_sum_www = udp_head_crc_sum_ww[31:16] + udp_head_crc_sum_ww[15:0];
 	
 	
-assign udp_full_crc_sum_w = pseudo_crc_sum_ww[15:0] + udp_head_crc_sum_ww[15:0] + udp_data_chksum[15:0];
+assign udp_full_crc_sum_w = pseudo_crc_sum_www[15:0] + udp_head_crc_sum_www[15:0] + udp_data_chksum[15:0];
 assign udp_full_crc_sum_ww = udp_full_crc_sum_w[31:16] + udp_full_crc_sum_w[15:0];
-
-
-	
-	
-/*
-
-//UDP DATA POINTER
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)																	udp_data_ptr <= 17'b0;
-	else if (udp_stop)														udp_data_ptr <= 17'b0;
-	else if (work_r & udp_data_out_sel & udp_data_out_rd)			udp_data_ptr <= udp_data_ptr + 4'd4;
-
-//UDP FRAGMENT SEND STOP
-assign udp_stop = work_r & udp_data_out_sel & udp_data_out_rd & ((udp_data_ptr + 4'd4) >= udp_length_r);
-
-//UDP OUT DATA READY
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)				udp_data_out_rdy_r <= 1'b0;
-	else if (udp_stop)	udp_data_out_rdy_r <= 1'b0;
-	else if (start)	udp_data_out_rdy_r <= 1'b1;
-	
-//UDP DATA RECEIVE PHASE
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)																	udp_data_rcv_ph <= 1'b0;
-	else if (udp_stop)														udp_data_rcv_ph <= 1'b0;
-	else if (work_r & udp_data_out_sel & udp_data_out_rd)			udp_data_rcv_ph <= 1'b1;
-
-//UDP DATA REG
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)																			udp_data_r <= 32'b0;
-	else if (udp_stop)																udp_data_r <= 32'b0;
-	else if (udp_data_rcv_ph & udp_data_out_sel & udp_data_out_rd)		udp_data_r <= udp_data_in;
-
-
-//UDP DATA SEND PHASE
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)																							udp_data_snd_ph <= 1'b0;
-	else if (udp_stop)																				udp_data_snd_ph <= 1'b0;
-	else if (work_r & udp_data_rcv_ph & udp_data_out_sel & udp_data_out_rd)			udp_data_snd_ph <= 1'b1;
-
-
-
-//Output signals
-assign udp_busy = 			work_r;
-assign udp_data_out_rdy =	udp_data_out_rdy_r;
-assign udp_data_out =		(udp_data_snd_ph) 							? udp_data_r :
-									(udp_data_rcv_ph & !udp_data_snd_ph)	? {udp_length_r, udp_chksum_r} :
-									(work_r & !udp_data_rcv_ph)			? {udp_src_port_r, udp_dst_port_r} : 32'h0;
-
-//UDP BYTE ENABLE									
-assign udp_be_out = 			(udp_data_snd_ph & ((udp_data_ptr + 3'd1) == udp_length_r)) ? 2'b01 :
-									(udp_data_snd_ph & ((udp_data_ptr + 3'd2) == udp_length_r)) ? 2'b10 :
-									(udp_data_snd_ph & ((udp_data_ptr + 3'd3) == udp_length_r)) ? 2'b11 :
-									(udp_data_snd_ph)	? 2'b00 :
-									(udp_data_rcv_ph & !udp_data_snd_ph)	? 2'b00 :
-									(work_r & !udp_data_rcv_ph)			? 2'b00 : 
-									2'b00;
-
-//UDP INPUT DATA READ
-assign udp_data_in_rd = udp_data_rcv_ph & udp_data_out_sel & udp_data_out_rd;
-*/
-
-
+assign udp_full_crc_sum_www = udp_full_crc_sum_ww[31:16] + udp_full_crc_sum_ww[15:0];
 
 
 

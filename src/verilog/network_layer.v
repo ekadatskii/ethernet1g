@@ -16,6 +16,7 @@ module network_layer
 	,output				upper_op
 	,output				upper_op_end
 	,output	[31:0]	upper_data
+	,output	[15:0]	upper_data_len
 
 	,output	[3:0]		version_num_o
 	,output	[3:0]		header_len_o
@@ -141,7 +142,7 @@ assign crc_sum_w = 	(rcv_op & rcv_op_st)						? 	(rcv_data[31:16] + rcv_data[15:
 assign crc_sum_ww = crc_sum_w[15:0] + crc_sum_w[31:16];
 
 //PSEUDOHEADER CRC
-assign pseudo_crc_sum_w = source_addr[31:16] + source_addr[15:0] + dest_addr[31:16] + dest_addr[15:0] + prot_type[7:0];
+assign pseudo_crc_sum_w = source_addr[31:16] + source_addr[15:0] + dest_addr[31:16] + dest_addr[15:0] + prot_type[7:0] + (total_len[15:0] - (header_len * 4'd4));
 assign pseudo_crc_sum_ww = pseudo_crc_sum_w[31:16] + pseudo_crc_sum_w[15:0];
 assign pseudo_crc_sum_www = pseudo_crc_sum_ww[31:16] + pseudo_crc_sum_ww[15:0];
 
@@ -154,7 +155,7 @@ always @(posedge clk or negedge rst_n)
 	else if ((word_cnt == header_len) & upper_op_run_w & rcv_op)
 														upper_op_start_r <= 1'b1;
 														
-assign upper_op_run_w =	(prot_type_i == 16'h0800) & (prot_type == 8'd17) & (word_cnt >= 5) & (dest_addr == 32'hffffffff) &
+assign upper_op_run_w =	(prot_type_i == 16'h0800) & (prot_type == 8'd06) & (word_cnt >= 5) /*& (dest_addr == 32'hffffffff)*/ &
 								(crc_sum_r == 16'hffff);
 										
 	
@@ -199,6 +200,7 @@ assign upper_op_st		= upper_op_start_r;
 assign upper_op			= upper_op_r;
 assign upper_op_end		= upper_op_stop_r;
 assign upper_data			= upper_data_r;
+assign upper_data_len	= total_len - (4*header_len);
 
 
 endmodule

@@ -138,6 +138,7 @@ wire				nl_up_op_st;
 wire				nl_up_op;
 wire				nl_up_op_end;
 wire	[31:0]	nl_up_data;
+wire	[15:0]	nl_up_data_len;
 
 wire	[3:0]		nl_version_num;
 wire	[3:0]		nl_header_len;
@@ -590,6 +591,7 @@ network_layer network_layer
 	,.upper_op			(	nl_up_op				)
 	,.upper_op_end		(	nl_up_op_end		)
 	,.upper_data		(	nl_up_data			)
+	,.upper_data_len	(	nl_up_data_len		)
 
 	,.version_num_o	(	nl_version_num		)
 	,.header_len_o		(	nl_header_len		)
@@ -618,13 +620,20 @@ transport_layer transport_layer
 	,.rcv_op				(	nl_up_op			)
 	,.rcv_op_end		(	nl_up_op_end	)
 	,.rcv_data			(	nl_up_data		)
+	,.rcv_data_len		(	nl_up_data_len	)
 	,.prot_type			(	nl_prot_type	)
 	,.pseudo_crc_sum	(	nl_pseudo_crc	)
 	
-	,.source_port_o	()
+	,.source_port_o	(	tcp_source_port_i	)
 	,.dest_port_o		()
 	,.packet_length_o	()
 	,.checksum_o		()
+	,.seq_num_o			(	tcp_seq_num_i		)
+	,.ack_num_o			(	tcp_ack_num_i		)
+	,.tcp_flags_o		(	tcp_flags_i			)
+	,.options_o			(	tcp_options_i		)
+	,.tcp_head_len_o	(	tcp_head_len_i		)
+	,.tcp_window_o		(	tcp_window_i		)
 	
 	,.upper_op_st		(	udp_upper_op_st	)
 	,.upper_op			(	udp_upper_op		)
@@ -633,6 +642,8 @@ transport_layer transport_layer
 	,.crc_sum_o			(	udp_crc_sum			)
 
 );
+
+wire	[95:0]	tcp_options_i;
 
 wire 				udp_upper_op_st;
 wire 				udp_upper_op;
@@ -690,32 +701,91 @@ assign User_led2 = !increment_err;
 assign User_led3 = !crc_err;
 
 //--------------------------------------------------------------------------------//
+//										TCP CONTROLLER													 //
+//--------------------------------------------------------------------------------//
+tcp_controller	tcp_controller
+(
+	.clk						(	pll_62_5m_clk	)
+	,.rst_n					(	rst_n				)
+	
+	,.tcp_read_op_end_i	(	nl_up_op_end		)
+	,.tcp_source_port_i	(	tcp_source_port_i	)
+	,.tcp_dest_port_i		(	tcp_dest_port_i	)	
+	,.tcp_flags_i			(	tcp_flags_i			)
+	,.tcp_seq_num_i		(	tcp_seq_num_i		)
+	,.tcp_ack_num_i		(	tcp_ack_num_i		)
+	,.tcp_options_i		(							)
+	,.tcp_data_len_i		(	tcp_data_len_i		)
+	,.tcp_window_i			(	tcp_window_i		)
+
+	,.tcp_source_port_o	(	tcp_source_port_o	)
+	,.tcp_dest_port_o		(	tcp_dest_port_o	)
+	,.tcp_flags_o			(	tcp_flags_o			)
+	,.tcp_seq_num_o		(	tcp_seq_num_o		)
+	,.tcp_ack_num_o		(	tcp_ack_num_o		)
+	,.tcp_head_len_o		(	tcp_head_len_o		)
+	,.tcp_start_o			(	tcp_start_o			)
+	,.tcp_data_len_o		(	tcp_data_len_o		)
+	,.tcp_write_op_end_i	(							)
+	,.wdat_start_o			(	wdat_start_o		)
+	,.wdat_stop_i			(	udp_eop				)
+	
+);
+
+assign tcp_data_len_i = nl_up_data_len - (tcp_head_len_i*4); 
+
+//--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
 //--------------------------------------------------------------------------------//
-parameter UDP_DATA_LENGTH_IN_BYTE = 16'd1446;//16'd1450;
+parameter UDP_DATA_LENGTH_IN_BYTE = 16'd00;//16'd1450;
 
-wire	[47:0]		mac_dst_addr		= 48'h04_D4_C4_A5_A8_E0;//48'hFF_FF_FF_FF_FF_FF;		//broadcast
-wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;		//
+wire	[47:0]		mac_dst_addr		= 48'h04_D4_C4_A5_A8_E0;//DENIS//48'h04_D4_C4_A5_93_CB;
+wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;
 wire	[15:0]		mac_type				= 16'h08_00;
 
 wire	[ 3:0]		ip_version			= 4'h4;
 wire	[ 3:0]		ip_head_len			= 4'h5;
 wire	[ 7:0]		ip_dsf				= 8'h00;
-wire	[15:0]		ip_total_len		= 16'd20/*ip length*/ + 16'd8/*udp header length*/ + UDP_DATA_LENGTH_IN_BYTE;
+wire	[15:0]		ip_total_len		= 16'd20/*ip length*/ + (tcp_head_len_o*16'd4)/*udp header length*/ + tcp_data_len_o;
 wire	[15:0]		ip_id					= 16'h64_D7;		//25815
 wire	[ 2:0]		ip_flag				= 3'h0;
 wire	[13:0]		ip_frag_offset		= 13'h00_00;		
 wire	[ 7:0]		ip_ttl				= 8'h80;				//128
-wire	[ 7:0]		ip_prot				= 8'h11;				//UDP
+wire	[ 7:0]		ip_prot				= 8'h06;				//TCP
 //wire	[15:0]		ip_head_chksum		= 16'h00_00;
 wire	[31:0]		ip_src_addr			= 32'hC1_E8_1A_4E; //193.232.26.78 //= 32'hA9_FE_CE_77;		//169.254.206.119
 //wire	[31:0]		ip_src_addr			= 32'hFF_FF_FF_FF;
-wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_4F;
+wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_4F;//DENIS//32'hC1_E8_1A_64;
 wire	[31:0]		ip_options			= 32'h00_00_00_00;		//Not used now
 	
 wire	[15:0]		udp_src_port		= 16'hF718;			//63256
-wire	[15:0]		udp_dst_port		= 16'h1EA5;			//16'h1389;			//5001			
+wire	[15:0]		udp_dst_port		= 16'h1EA5;			//16'h1389;			//5001	
+wire	[15:0]		tcp_source_port_i;
+wire	[15:0]		tcp_source_port_o;
+wire	[15:0]		tcp_dest_port_i;
+wire	[15:0]		tcp_dest_port_o;
+wire	[31:0]		tcp_seq_num_i;
+wire	[31:0]		tcp_ack_num_i;
+wire	[31:0]		tcp_seq_num_o;
+wire	[31:0]		tcp_ack_num_o;
+wire	[15:0]		tcp_data_len_i; 
+wire	[ 3:0]		tcp_head_len_i;
+wire	[ 3:0]		tcp_head_len_o;
+
+wire	[31:0]		tcp_seq_num			= 32'h0000_0001;
+wire	[31:0]		tcp_ack_num			= tcp_seq_num_i + 1'b1;//32'h0000_0000;
+wire	[ 3:0]		tcp_head_len		= 4'h8;
+wire	[ 5:0]		tcp_flags			= 6'h012;
+wire	[ 5:0]		tcp_flags_i;
+wire	[ 5:0]		tcp_flags_o;
+wire					tcp_start_o;
+wire	[15:0]		tcp_window			= 16'd1600;						//TODO change size
+wire	[15:0]		tcp_urgent_ptr		= 16'h0000;
+wire	[95:0]		tcp_options			= 96'h020405b4_01_030308_01_01_0402;
 wire	[15:0]		udp_data_length	= UDP_DATA_LENGTH_IN_BYTE;
+wire	[15:0]		tcp_data_len_o;
+wire					wdat_start_o;
+wire	[15:0]		tcp_window_i;
 
 wire	[31:0]		udp_data_tr			= 32'h00_01_02_03;
 
@@ -748,6 +818,7 @@ wire	[31:0]	udp_fifo_rdata;
 
 wire	[31:0]	udp_data_chksum_w;
 wire	[31:0]	udp_data_chksum_ww;
+wire	[31:0]	udp_data_chksum_www;
 wire	[15:0]	udp_data_chksum;
 reg	[15:0]	udp_data_chksum_r;
 
@@ -755,13 +826,13 @@ reg	[15:0]	udp_data_chksum_r;
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 									start_reg <= 1'b0;
 	else if (start_reg)							start_reg <= 1'b0;
-	else if (timer_pas & !start_lock)		start_reg <= 1'b1;
+	else if (wdat_start_o & !start_lock)	start_reg <= 1'b1;
 	
 //START LOCK
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 									start_lock <= 1'b0;
 	else if (udp_eop)								start_lock <= 1'b0;
-	else if (timer_pas)							start_lock <= 1'b1;
+	else if (wdat_start_o)						start_lock <= 1'b1;
 	
 //RUN DATA SEND TO FIFO
 always @(posedge pll_62_5m_clk or negedge rst_n)
@@ -769,7 +840,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	else if (udp_eop)								udp_run <= 1'b0;
 	else if (start_reg)							udp_run <= 1'b1;
 	
-assign udp_fifo_data_wr = udp_run & (udp_fifo_data_wr_chkr < UDP_DATA_LENGTH_IN_BYTE);
+assign udp_fifo_data_wr = udp_run & (udp_fifo_data_wr_chkr < tcp_data_len_o);
 
 //UDP DATA SEND TO FIFO COUNTER
 always @(posedge pll_62_5m_clk or negedge rst_n)
@@ -781,13 +852,13 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 									udp_start <= 1'b0;
 	else if (udp_start)							udp_start <= 1'b0;
-	else if ((udp_fifo_data_wr_chkr >= UDP_DATA_LENGTH_IN_BYTE) & !udp_start_lock)	
+	else if ((udp_fifo_data_wr_chkr >= tcp_data_len_o) & !udp_start_lock & udp_run)
 														udp_start <= 1'b1;	
 //START LOCK
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 									udp_start_lock <= 1'b0;
 	else if (udp_eop)								udp_start_lock <= 1'b0;
-	else if (udp_fifo_data_wr_chkr >= UDP_DATA_LENGTH_IN_BYTE)
+	else if ((udp_fifo_data_wr_chkr >= tcp_data_len_o) & udp_run)
 														udp_start_lock <= 1'b1;
 
 //UDP PACKET NUMBER OR UDP DATA SELECTOR
@@ -859,17 +930,17 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //UDP DATA CRC
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)							udp_data_chksum_r <= 16'b0;
+//	else if (udp_eop)					udp_data_chksum_r <= 16'b0;
 	else if (start_reg)				udp_data_chksum_r <= 16'b0;
 	else if (udp_fifo_data_wr)		udp_data_chksum_r <= udp_data_chksum;
 	
-assign udp_data_chksum_w =	(udp_fifo_data_wr_chkr + 4'd1 == UDP_DATA_LENGTH_IN_BYTE) ? {udp_data_gen[31:24], 8'h00} : 
-									(udp_fifo_data_wr_chkr + 4'd2 == UDP_DATA_LENGTH_IN_BYTE) ?  udp_data_gen[31:16] : 
-									(udp_fifo_data_wr_chkr + 4'd3 == UDP_DATA_LENGTH_IN_BYTE) ? (udp_data_gen[31:16] + {udp_data_gen[15:8], 8'h00}) : (udp_data_gen[31:16] + udp_data_gen[15:0]);
+assign udp_data_chksum_w =	(udp_fifo_data_wr_chkr + 4'd1 == tcp_data_len_o) ? {udp_data_gen[31:24], 8'h00} : 
+									(udp_fifo_data_wr_chkr + 4'd2 == tcp_data_len_o) ?  udp_data_gen[31:16] : 
+									(udp_fifo_data_wr_chkr + 4'd3 == tcp_data_len_o) ? (udp_data_gen[31:16] + {udp_data_gen[15:8], 8'h00}) : (udp_data_gen[31:16] + udp_data_gen[15:0]);
 									
 assign udp_data_chksum_ww	= udp_data_chksum_w + udp_data_chksum_r[15:0];
-assign udp_data_chksum		= udp_data_chksum_ww[31:16] + udp_data_chksum_ww[15:0];
-
-
+assign udp_data_chksum_www	= udp_data_chksum_ww[31:16] + udp_data_chksum_ww[15:0];
+assign udp_data_chksum		= udp_data_chksum_www[31:16] + udp_data_chksum_www[15:0];	//= udp_data_chksum_ww[31:16] + udp_data_chksum_ww[15:0]; TODO for resend test
 
 //FIFO TO COLLECT UDP DATA	
 umio_fifo #(2048, 32) umio_fifo
@@ -890,7 +961,7 @@ udp_full_transmitter udp_full_transmitter
 	,.rst_n					(	rst_n				)
 	
 	//control signals
-	,.start					(	udp_start		)
+	,.start					(	tcp_start_o | udp_start		)
 	
 	//output data + controls
 	,.data_out				(	udp_data_o		)
@@ -925,14 +996,21 @@ udp_full_transmitter udp_full_transmitter
 	,.ip_options			(	ip_options		)
 	
 	//---------------------------------------------------------------------	
-	//UDP
-	,.udp_src_port			(	udp_src_port	)
-	,.udp_dst_port			(	udp_dst_port	)
-	,.udp_data_length		(	udp_data_length)
+	//UDP + TCP
+	,.udp_src_port			(	tcp_source_port_o	)
+	,.udp_dst_port			(	tcp_dest_port_o	)
+	,.udp_data_length		(	tcp_data_len_o		)
+	,.tcp_seq_num			(	tcp_seq_num_o	)
+	,.tcp_ack_num			(	tcp_ack_num_o	)
+	,.tcp_head_len			(	tcp_head_len_o	)
+	,.tcp_flags				(	tcp_flags_o		)
+	,.tcp_window			(	tcp_window		)
+	,.tcp_urgent_ptr		(	tcp_urgent_ptr	)
+	,.tcp_options			(	tcp_options		)
 	,.udp_data_chksum		(	udp_data_chksum_r)
 );
 
-										
+
 //TIMER
 reg	[31:0]	timer_reg;
 wire				timer_pas;
