@@ -36,9 +36,7 @@ module tcp_controller
 	,output	[31:0]		test5_o
 );
 
-`ifdef DATA_TX	localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
-`else 			localparam TCP_DATA_LENGTH_IN_BYTE = 16'd00;
-`endif
+localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
 
 localparam [15:0]	LOCAL_PORT = 16'hF718; //63256
 
@@ -195,7 +193,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												ack_start <= 1'b0;
 	else if (ack_start)									ack_start <= 1'b0;
-	else if (ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED) & (tcp_data_len_i != 0))
+	else if (ack_rcv & !fin_rcv  & (tcp_data_len_i != 0) & (state == STATE_ESTABLISHED))
 																ack_start <= 1'b1;
 
 //START RESET SEND
@@ -213,10 +211,8 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)												wdat_start <= 1'b0;
 //	else if (state == STATE_CLOSED)					wdat_start <= 1'b0;	
 	else if (wdat_start)									wdat_start <= 1'b0;
-`ifdef DATA_TX
-	else if (!tcp_op_rcv_i & (state == STATE_ESTABLISHED) & !wdat_lock & (tcp_packet_counter < 4) & (tcp_window_r > 25000))//(tcp_window_r > 40000))
+	else if (!tcp_op_rcv_i & !tcp_start_o & !wdat_lock & !trnsmt_busy_i & (tcp_packet_counter < 16) & (tcp_window_r > 25000) & (state == STATE_ESTABLISHED))//(tcp_window_r > 40000))
 																wdat_start <= 1'b1;
-`endif
 
 //LOCK WRITE DATA	
 always @(posedge clk or negedge rst_n)
@@ -224,7 +220,8 @@ always @(posedge clk or negedge rst_n)
 //	else if (state == STATE_CLOSED)					wdat_lock <= 1'b0;
 	else if (wdat_stop_i & (state == STATE_ESTABLISHED))//(ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED))
 																wdat_lock <= 1'b0;	
-	else if (wdat_start)									wdat_lock <= 1'b1;														
+	else if (wdat_start)		
+																wdat_lock <= 1'b1;														
 
 //TCP FLAGS REG FOR WRITE OPERATIONS
 always @(posedge clk or negedge rst_n)
@@ -234,16 +231,15 @@ always @(posedge clk or negedge rst_n)
 																tcp_flags_r <= 6'h14;
 //SYN+ACK SEND WHEN SYN RECEIVED
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))	
-																tcp_flags_r <= 6'h12;
-																
-	else if (state == STATE_CLOSE_WAIT)				tcp_flags_r <= 6'h11;
-`ifdef DATA_TX
-	else if (state == STATE_ESTABLISHED)
+																tcp_flags_r <= 6'h12;															
+
+	else if (wdat_start & (state == STATE_ESTABLISHED))
 																tcp_flags_r <= 6'h18;
-`else
-	else if (ack_rcv & (state == STATE_ESTABLISHED))
+	else if (ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_flags_r <= 6'h10;
-`endif																
+																
+	else if (state == STATE_CLOSE_WAIT)				tcp_flags_r <= 6'h11;																
+
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & ack_rcv & (state == STATE_CLOSED))
 																tcp_flags_r <= 6'h14;
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & !ack_rcv & (state == STATE_CLOSED))
@@ -268,13 +264,10 @@ always @(posedge clk or negedge rst_n)
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))		
 																tcp_seq_num_r <= ISS;//tcp_seq_num_r + 1'b1;
 																
-	
-	else if (state == STATE_CLOSE_WAIT)				tcp_seq_num_r <= tcp_seq_num_r + 1'b1;
-`ifdef DATA_TX
-//	else if (ack_rcv & (state == STATE_ESTABLISHED)) tcp_seq_num_r <= tcp_seq_num_r + TCP_DATA_LENGTH_IN_BYTE;
-	else if (wdat_stop_i & (state == STATE_ESTABLISHED))
+	else if (wdat_stop_i & wdat_lock & (state == STATE_ESTABLISHED))
 																tcp_seq_num_r <= tcp_seq_num_r + TCP_DATA_LENGTH_IN_BYTE;
-`endif	
+																
+	else if (state == STATE_CLOSE_WAIT)				tcp_seq_num_r <= tcp_seq_num_r + 1'b1;																
 
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & ack_rcv & (state == STATE_CLOSED))
 																tcp_seq_num_r <= tcp_ack_num_i;
@@ -301,28 +294,23 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_head_len_r <= 4'd08;
 	else if (ack_rcv & (state == STATE_LISTEN))
 																tcp_head_len_r <= 4'd05;
-`ifdef DATA_TX
+
 	else if (state == STATE_ESTABLISHED)
 																tcp_head_len_r <= 4'd05;
-`else													
-	else if (ack_rcv & (state == STATE_ESTABLISHED))
-																tcp_head_len_r <= 4'd05;																
-`endif															
-	else if (fin_rcv & (state == STATE_ESTABLISHED))
-																tcp_head_len_r <= 4'd08;
+
 																
 //TCP DATA LENGTH FOR WRITE
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_data_len_r <= 16'd00;
 	else if (state == STATE_LISTEN)
 																tcp_data_len_r <= 16'd00;
-`ifdef DATA_TX
-	else if (!fin_rcv & (state == STATE_ESTABLISHED))
+//`ifdef DATA_TX
+	else if (wdat_start & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= TCP_DATA_LENGTH_IN_BYTE;
-`else
-	else if (ack_rcv & (state == STATE_ESTABLISHED))
+//`else
+	else if (ack_rcv & (tcp_data_len_i != 0) & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= 16'd00;
-`endif															
+//`endif															
 	else if (fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= 16'd00;
 	else if (state == STATE_CLOSED)

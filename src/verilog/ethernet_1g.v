@@ -955,7 +955,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
 					udp_packet_num <= 64'b0;
-	else if (udp_eop & udp_data_out_rd)
+	else if (udp_eop & udp_data_out_rd & udp_run)
 					udp_packet_num <= udp_packet_num + 1'b1;	
 					
 //UDP DATA CRC
@@ -1044,7 +1044,7 @@ udp_full_transmitter udp_full_transmitter
 	,.work_o					(	transmitter_work	)
 );
 
-wire tcp_controller_busy = udp_run | transmitter_work;
+wire tcp_controller_busy = udp_run | start_reg | transmitter_work;
 
 
 //TIMER

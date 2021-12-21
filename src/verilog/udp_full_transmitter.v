@@ -359,9 +359,9 @@ always @(posedge clk or negedge rst_n)
 //IP HEADER CHECKSUM REGISTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								ip_head_chksum_r <= 16'b0;
-	else if (start & !work_r)			ip_head_chksum_r <= ~ip_head_chksum_www;
+	else if (head_ptr == 16'd1)		ip_head_chksum_r <= ~ip_head_chksum_www;
 	
-assign ip_head_chksum_w		= {ip_version, ip_head_len, ip_dsf} + ip_total_len + ip_id + {ip_flag, ip_frag_offset} + {ip_ttl, ip_prot} + ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0];
+assign ip_head_chksum_w		= {ip_version_r, ip_head_len_r, ip_dsf_r} + ip_total_len_r + ip_id_r + {ip_flag_r, ip_frag_offset_r} + {ip_ttl_r, ip_prot_r} + ip_src_addr_r[31:16] + ip_src_addr_r[15:0] + ip_dst_addr_r[31:16] + ip_dst_addr_r[15:0];
 assign ip_head_chksum_ww	= ip_head_chksum_w[31:16]+ ip_head_chksum_w[15:0];
 assign ip_head_chksum_www	= ip_head_chksum_ww[31:16]+ ip_head_chksum_ww[15:0];
 	
@@ -495,16 +495,16 @@ assign udp_head_crc_sum_www = udp_head_crc_sum_ww[31:16] + udp_head_crc_sum_ww[1
 assign udp_full_crc_sum_ww = udp_full_crc_sum_w[31:16] + udp_full_crc_sum_w[15:0];
 assign udp_full_crc_sum_www = udp_full_crc_sum_ww[31:16] + udp_full_crc_sum_ww[15:0];*/
 assign udp_full_crc_sum_w =	//preudo header crc sum
-										ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0] + ip_prot[7:0] + (udp_data_length + tcp_head_len * 4'd4) +
+										ip_src_addr_r[31:16] + ip_src_addr_r[15:0] + ip_dst_addr_r[31:16] + ip_dst_addr_r[15:0] + ip_prot_r[7:0] + (udp_data_length_r + tcp_head_len_r * 4'd4) +
 										//tcp header crc sum
-										udp_src_port[15:0] + udp_dst_port[15:0] + tcp_seq_num[31:16] + tcp_seq_num[15:0] + tcp_ack_num[31:16] + tcp_ack_num[15:0] + {tcp_head_len, 6'b0, tcp_flags} +
-										tcp_window + tcp_urgent_ptr +
-										((tcp_head_len >= 4'd8) ? tcp_options[95:80] : 16'h0) +
-										((tcp_head_len >= 4'd8) ? tcp_options[79:64] : 16'h0) +
-										((tcp_head_len >= 4'd7) ? tcp_options[63:48] : 16'h0) +
-										((tcp_head_len >= 4'd7) ? tcp_options[47:32] : 16'h0) +
-										((tcp_head_len >= 4'd6) ? tcp_options[31:16] : 16'h0) +
-										((tcp_head_len >= 4'd6) ? tcp_options[15: 0] : 16'h0) +
+										udp_src_port_r[15:0] + udp_dst_port_r[15:0] + tcp_seq_num_r[31:16] + tcp_seq_num_r[15:0] + tcp_ack_num_r[31:16] + tcp_ack_num_r[15:0] + {tcp_head_len_r, 6'b0, tcp_flags_r} +
+										tcp_window_r + tcp_urgent_ptr_r +
+										((tcp_head_len >= 4'd8) ? tcp_options_r[95:80] : 16'h0) +
+										((tcp_head_len >= 4'd8) ? tcp_options_r[79:64] : 16'h0) +
+										((tcp_head_len >= 4'd7) ? tcp_options_r[63:48] : 16'h0) +
+										((tcp_head_len >= 4'd7) ? tcp_options_r[47:32] : 16'h0) +
+										((tcp_head_len >= 4'd6) ? tcp_options_r[31:16] : 16'h0) +
+										((tcp_head_len >= 4'd6) ? tcp_options_r[15: 0] : 16'h0) +
 										//data crc sum
 										udp_data_chksum[15:0];
 										
