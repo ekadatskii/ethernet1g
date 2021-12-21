@@ -701,6 +701,33 @@ assign User_led2 = !increment_err;
 assign User_led3 = !crc_err;
 
 //--------------------------------------------------------------------------------//
+//FIFO for control signals collection
+//
+wire	[101:0] ctrl_fifo_i = {tcp_data_len_i[15:0], tcp_flags_i[5:0], tcp_window_i[15:0], tcp_seq_num_i[31:0], tcp_ack_num_i[31:0]};
+
+umio_fifo #(16, 102) fifo_ctrl
+(
+	.rst_n					(	rst_n					)
+	,.clk						(	pll_62_5m_clk		)
+	,.rd_data				(	ctrl_fifo_o			)
+	,.wr_data				(	ctrl_fifo_i			)
+	,.rd_en					(	tcp_op_rcv_rd_o	)
+	,.wr_en					(	nl_up_op_end & !fifo_ctrl_full )
+	,.full					(	fifo_ctrl_full		)
+	,.empty					(	fifo_ctrl_empty	)
+);
+
+wire	[101:0]		ctrl_fifo_o;
+wire	[15:0]		tcp_data_len_ii	= ctrl_fifo_o[101:86]; 
+wire	[ 5:0]		tcp_flags_ii		= ctrl_fifo_o[85:80];
+wire	[15:0]		tcp_window_ii		= ctrl_fifo_o[79:64];
+wire	[31:0]		tcp_seq_num_ii		= ctrl_fifo_o[63:32];
+wire	[31:0]		tcp_ack_num_ii 	= ctrl_fifo_o[31:0];
+
+wire					tcp_op_rcv_rd_o;
+wire					fifo_ctrl_full;
+wire					fifo_ctrl_empty;
+//--------------------------------------------------------------------------------//
 //										TCP CONTROLLER													 //
 //--------------------------------------------------------------------------------//
 tcp_controller	tcp_controller
@@ -708,15 +735,16 @@ tcp_controller	tcp_controller
 	.clk						(	pll_62_5m_clk	)
 	,.rst_n					(	rst_n				)
 	
-	,.tcp_read_op_end_i	(	nl_up_op_end		)
+	,.tcp_op_rcv_i			(	!fifo_ctrl_empty	)
 	,.tcp_source_port_i	(	tcp_source_port_i	)
 	,.tcp_dest_port_i		(	tcp_dest_port_i	)	
-	,.tcp_flags_i			(	tcp_flags_i			)
-	,.tcp_seq_num_i		(	tcp_seq_num_i		)
-	,.tcp_ack_num_i		(	tcp_ack_num_i		)
+	,.tcp_flags_i			(	tcp_flags_ii		)
+	,.tcp_seq_num_i		(	tcp_seq_num_ii		)
+	,.tcp_ack_num_i		(	tcp_ack_num_ii		)
 	,.tcp_options_i		(							)
-	,.tcp_data_len_i		(	tcp_data_len_i		)
-	,.tcp_window_i			(	tcp_window_i		)
+	,.tcp_data_len_i		(	tcp_data_len_ii	)
+	,.tcp_window_i			(	tcp_window_ii		)
+	,.tcp_op_rcv_rd_o		(	tcp_op_rcv_rd_o	)
 
 	,.tcp_source_port_o	(	tcp_source_port_o	)
 	,.tcp_dest_port_o		(	tcp_dest_port_o	)
@@ -729,6 +757,7 @@ tcp_controller	tcp_controller
 	,.tcp_write_op_end_i	(							)
 	,.wdat_start_o			(	wdat_start_o		)
 	,.wdat_stop_i			(	udp_eop				)
+	,.trnsmt_busy_i		(	tcp_controller_busy	)
 	
 );
 
@@ -821,6 +850,8 @@ wire	[31:0]	udp_data_chksum_ww;
 wire	[31:0]	udp_data_chksum_www;
 wire	[15:0]	udp_data_chksum;
 reg	[15:0]	udp_data_chksum_r;
+
+wire				transmitter_work;
 
 //START AFTER WAIT
 always @(posedge pll_62_5m_clk or negedge rst_n)
@@ -931,7 +962,8 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)							udp_data_chksum_r <= 16'b0;
 //	else if (udp_eop)					udp_data_chksum_r <= 16'b0;
-	else if (start_reg)				udp_data_chksum_r <= 16'b0;
+	else if (start_reg | tcp_start_o)
+											udp_data_chksum_r <= 16'b0;
 	else if (udp_fifo_data_wr)		udp_data_chksum_r <= udp_data_chksum;
 	
 assign udp_data_chksum_w =	(udp_fifo_data_wr_chkr + 4'd1 == tcp_data_len_o) ? {udp_data_gen[31:24], 8'h00} : 
@@ -1008,7 +1040,11 @@ udp_full_transmitter udp_full_transmitter
 	,.tcp_urgent_ptr		(	tcp_urgent_ptr	)
 	,.tcp_options			(	tcp_options		)
 	,.udp_data_chksum		(	udp_data_chksum_r)
+	
+	,.work_o					(	transmitter_work	)
 );
+
+wire tcp_controller_busy = udp_run | transmitter_work;
 
 
 //TIMER

@@ -81,6 +81,8 @@ module udp_full_transmitter
 	,input	[15:0]		tcp_urgent_ptr
 	,input	[95:0]		tcp_options
 	
+	,output					work_o
+	
 	//input data
 /*	
 	,input	[31:0]		udp_data_in
@@ -384,28 +386,28 @@ assign pseudo_crc_sum_www = pseudo_crc_sum_ww[31:16] + pseudo_crc_sum_ww[15:0];
 	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								crc_test1 <= 16'b0;
-	else if (start & !work_r)			crc_test1 <= pseudo_crc_sum_ww;
+	else 										crc_test1 <= pseudo_crc_sum_ww;
 	
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)								crc_test2 <= 16'b0;
-	else if (start & !work_r)			crc_test2 <= udp_head_crc_sum_ww;
+	if (!rst_n)								crc_test2 <= 32'b0;
+	else 										crc_test2 <= udp_src_port[15:0] + udp_dst_port[15:0] + tcp_seq_num[31:16] + tcp_seq_num[15:0] + tcp_ack_num[31:16] + tcp_ack_num[15:0];
 	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								crc_test3 <= 32'b0;
-	else if (start & !work_r)			crc_test3 <= udp_src_port[15:0] + udp_dst_port[15:0] + tcp_seq_num[31:16] + tcp_seq_num[15:0] + tcp_ack_num[31:16] + tcp_ack_num[15:0];
+	else 										crc_test3 <= {tcp_head_len, 6'b0, tcp_flags} + tcp_window + tcp_urgent_ptr;
 	
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)								crc_test4 <= 32'b0;
-	else if (start & !work_r)			crc_test4 <= {tcp_head_len, 6'b0, tcp_flags} + tcp_window + tcp_urgent_ptr;
+	if (!rst_n)								crc_test4 <= 16'b0;
+	else 										crc_test4 <= udp_full_crc_sum_w;//udp_head_crc_sum_ww;
 	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								crc_test5 <= 32'b0;
-	else if (start & !work_r)			crc_test5 <= ((tcp_head_len >= 4'd8) ? tcp_options[95:80] : 16'h0) 
+	else 										crc_test5 <= udp_full_crc_sum_www;/*((tcp_head_len >= 4'd8) ? tcp_options[95:80] : 16'h0) 
 									+ ((tcp_head_len >= 4'd8) ? tcp_options[79:64] : 16'h0)
 									+ ((tcp_head_len >= 4'd7) ? tcp_options[63:48] : 16'h0)
 									+ ((tcp_head_len >= 4'd7) ? tcp_options[47:32] : 16'h0)
 									+ ((tcp_head_len >= 4'd6) ? tcp_options[31:16] : 16'h0)
-									+ ((tcp_head_len >= 4'd6) ? tcp_options[15: 0] : 16'h0);
+									+ ((tcp_head_len >= 4'd6) ? tcp_options[15: 0] : 16'h0);*/
 //-------------------------------------------------------------------------------------------------------------
 
 //UDP SOURCE REGISTER
@@ -473,7 +475,8 @@ always @(posedge clk or negedge rst_n)
 //UDP CHECKSUM
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)								udp_chksum_r <= 16'b0;
-	else if (start & !work_r) 			udp_chksum_r <= ~udp_full_crc_sum_www;
+	//write after initialization
+	else if (head_ptr == 16'd1) 		udp_chksum_r <= ~udp_full_crc_sum_www;
 	
 assign udp_head_crc_sum_w = udp_src_port[15:0] + udp_dst_port[15:0] + tcp_seq_num[31:16] + tcp_seq_num[15:0] + tcp_ack_num[31:16] + tcp_ack_num[15:0] + {tcp_head_len, 6'b0, tcp_flags} 
 									+ tcp_window + tcp_urgent_ptr 
@@ -488,9 +491,27 @@ assign udp_head_crc_sum_ww = udp_head_crc_sum_w[31:16] + udp_head_crc_sum_w[15:0
 assign udp_head_crc_sum_www = udp_head_crc_sum_ww[31:16] + udp_head_crc_sum_ww[15:0];
 	
 	
-assign udp_full_crc_sum_w = pseudo_crc_sum_www[15:0] + udp_head_crc_sum_www[15:0] + udp_data_chksum[15:0];
+/*assign udp_full_crc_sum_w = pseudo_crc_sum_www[15:0] + udp_head_crc_sum_www[15:0] + udp_data_chksum[15:0];
+assign udp_full_crc_sum_ww = udp_full_crc_sum_w[31:16] + udp_full_crc_sum_w[15:0];
+assign udp_full_crc_sum_www = udp_full_crc_sum_ww[31:16] + udp_full_crc_sum_ww[15:0];*/
+assign udp_full_crc_sum_w =	//preudo header crc sum
+										ip_src_addr[31:16] + ip_src_addr[15:0] + ip_dst_addr[31:16] + ip_dst_addr[15:0] + ip_prot[7:0] + (udp_data_length + tcp_head_len * 4'd4) +
+										//tcp header crc sum
+										udp_src_port[15:0] + udp_dst_port[15:0] + tcp_seq_num[31:16] + tcp_seq_num[15:0] + tcp_ack_num[31:16] + tcp_ack_num[15:0] + {tcp_head_len, 6'b0, tcp_flags} +
+										tcp_window + tcp_urgent_ptr +
+										((tcp_head_len >= 4'd8) ? tcp_options[95:80] : 16'h0) +
+										((tcp_head_len >= 4'd8) ? tcp_options[79:64] : 16'h0) +
+										((tcp_head_len >= 4'd7) ? tcp_options[63:48] : 16'h0) +
+										((tcp_head_len >= 4'd7) ? tcp_options[47:32] : 16'h0) +
+										((tcp_head_len >= 4'd6) ? tcp_options[31:16] : 16'h0) +
+										((tcp_head_len >= 4'd6) ? tcp_options[15: 0] : 16'h0) +
+										//data crc sum
+										udp_data_chksum[15:0];
+										
 assign udp_full_crc_sum_ww = udp_full_crc_sum_w[31:16] + udp_full_crc_sum_w[15:0];
 assign udp_full_crc_sum_www = udp_full_crc_sum_ww[31:16] + udp_full_crc_sum_ww[15:0];
+
+assign work_o = work_r;
 
 
 
