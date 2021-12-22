@@ -727,6 +727,20 @@ wire	[31:0]		tcp_ack_num_ii 	= ctrl_fifo_o[31:0];
 wire					tcp_op_rcv_rd_o;
 wire					fifo_ctrl_full;
 wire					fifo_ctrl_empty;
+wire					packet_drop;
+
+reg	[31:0]		packet_next;
+
+
+//NEXT RECEIVE PACKET NUMBER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												packet_next <= 0;
+	else if (nl_up_op_end & tcp_flags_i[1])	//SYN
+																packet_next <= tcp_seq_num_i + tcp_data_len_i;
+	else if (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i == packet_next))	//ACK
+																packet_next <= tcp_seq_num_i + tcp_data_len_i;
+																
+assign packet_drop = (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i != packet_next));
 //--------------------------------------------------------------------------------//
 //										TCP CONTROLLER													 //
 //--------------------------------------------------------------------------------//
@@ -758,6 +772,7 @@ tcp_controller	tcp_controller
 	,.wdat_start_o			(	wdat_start_o		)
 	,.wdat_stop_i			(	udp_eop				)
 	,.trnsmt_busy_i		(	tcp_controller_busy	)
+	,.packet_drop			()
 	
 );
 
@@ -808,7 +823,7 @@ wire	[ 5:0]		tcp_flags			= 6'h012;
 wire	[ 5:0]		tcp_flags_i;
 wire	[ 5:0]		tcp_flags_o;
 wire					tcp_start_o;
-wire	[15:0]		tcp_window			= 16'd1600;						//TODO change size
+wire	[15:0]		tcp_window			= 16'd40000;						//TODO change size
 wire	[15:0]		tcp_urgent_ptr		= 16'h0000;
 wire	[95:0]		tcp_options			= 96'h020405b4_01_030308_01_01_0402;
 wire	[15:0]		udp_data_length	= UDP_DATA_LENGTH_IN_BYTE;

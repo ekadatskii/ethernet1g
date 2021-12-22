@@ -28,6 +28,7 @@ module tcp_controller
 	
 	,output					wdat_start_o
 	,input					trnsmt_busy_i
+	,input					packet_drop
 	
 	,output	[31:0]		test_o
 	,output	[31:0]		tet2_o
@@ -69,6 +70,7 @@ reg	[4:0]		tcp_packet_counter;
 reg	[15:0]	tcp_window_r;
 reg	[31:0]	ISS;	//initial sequence number
 reg	[31:0]	SND_NEXT;	//next sequence number
+reg	[31:0]	ACK_NEXT;
 reg	[31:0]	SND_UNA;		//unacknowledged sequence number
 reg				tcp_op_rcv_rd_r;
 
@@ -106,7 +108,8 @@ always @(posedge clk or negedge rst_n)
 //UNACKNOWLEDGED SEQUENCE NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)									SND_UNA <= 0;
-	else if (state == STATE_LISTEN)		SND_UNA <= ISS;
+	else if (state == STATE_LISTEN)		SND_UNA <= ISS;	
+
 	
 //READ RECEIVED OPERATION
 always @(posedge clk or negedge rst_n)
@@ -137,6 +140,7 @@ always @(posedge clk or negedge rst_n)
 					STATE_SYN_RCVD:
 						begin
 							if (rst_rcv)		state <= STATE_LISTEN;
+							else if (syn_rcv)	state <= STATE_CLOSED;
 							else if (ack_rcv)	state <= STATE_ESTABLISHED;
 						end
 
@@ -209,7 +213,7 @@ always @(posedge clk or negedge rst_n)
 //START WRITE DATA
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												wdat_start <= 1'b0;
-//	else if (state == STATE_CLOSED)					wdat_start <= 1'b0;	
+	else if (state == STATE_CLOSED)					wdat_start <= 1'b0;	
 	else if (wdat_start)									wdat_start <= 1'b0;
 	else if (!tcp_op_rcv_i & !tcp_start_o & !wdat_lock & !trnsmt_busy_i & (tcp_packet_counter < 16) & (tcp_window_r > 25000) & (state == STATE_ESTABLISHED))//(tcp_window_r > 40000))
 																wdat_start <= 1'b1;
@@ -217,7 +221,7 @@ always @(posedge clk or negedge rst_n)
 //LOCK WRITE DATA	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												wdat_lock <= 1'b0;
-//	else if (state == STATE_CLOSED)					wdat_lock <= 1'b0;
+	else if (state == STATE_CLOSED)					wdat_lock <= 1'b0;
 	else if (wdat_stop_i & (state == STATE_ESTABLISHED))//(ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED))
 																wdat_lock <= 1'b0;	
 	else if (wdat_start)		
@@ -254,7 +258,14 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_ack_num_in_r <= 32'h0000_0000;
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)		tcp_ack_num_in_r <= tcp_ack_num_i;
-																
+	
+//NEXT RECEIVE ACKNOWLEDGE NUMBER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												ACK_NEXT <= 0;
+	else if (ack_rcv & (state == STATE_SYN_RCVD))ACK_NEXT <= tcp_seq_num_i + tcp_data_len_i;
+	else if (ack_rcv & (state == STATE_ESTABLISHED) & (tcp_seq_num_i == ACK_NEXT))
+																ACK_NEXT <= tcp_seq_num_i + tcp_data_len_i;
+
 
 //TCP SEQUENCE NUMBER FOR WRITE
 always @(posedge clk or negedge rst_n)
@@ -284,7 +295,7 @@ always @(posedge clk or negedge rst_n)
 																tcp_ack_num_r <= tcp_seq_num_i + 1'b1;
 	else if (fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_ack_num_r <= tcp_seq_num_i + 1'b1;
-	else if (ack_rcv & (state == STATE_ESTABLISHED))
+	else if (ack_rcv & (state == STATE_ESTABLISHED) & (tcp_seq_num_i == ACK_NEXT))
 																tcp_ack_num_r <= tcp_seq_num_i + tcp_data_len_i;
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & !ack_rcv & (state == STATE_CLOSED))
 																tcp_ack_num_r <= tcp_seq_num_i + tcp_data_len_i;																	
@@ -328,6 +339,8 @@ always @(posedge clk or negedge rst_n)
 	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_packet_counter <= 5'd0;
+	else if (state == STATE_CLOSED)					tcp_packet_counter <= 5'd0;	
+
 	else if (ack_rcv & (state == STATE_ESTABLISHED))												
 																tcp_packet_counter <= 5'd0;
 	else if (state == STATE_LISTEN)					tcp_packet_counter <= 5'd0;
