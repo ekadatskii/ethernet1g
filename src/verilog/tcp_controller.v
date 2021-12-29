@@ -25,16 +25,40 @@ module tcp_controller
 	,output	[15:0]		tcp_data_len_o
 	,input					tcp_write_op_end_i
 	,input					wdat_stop_i
+	,input					ram_lock_all_i
+	,input					ram_lock_any_i
 	
 	,output					wdat_start_o
+	,output					old_data_start_o
 	,input					trnsmt_busy_i
-	,input					packet_drop
+	,output					tcp_state_listen_o
+	,output					tcp_state_estblsh_o
+	,output					old_data_en_o
 	
 	,output	[31:0]		test_o
 	,output	[31:0]		tet2_o
 	,output	[31:0]		test3_o
 	,output	[31:0]		test4_o
 	,output	[31:0]		test5_o
+	
+	,input					ram_seq_lock_00	
+	,input					ram_seq_lock_01	
+	,input					ram_seq_lock_02	
+	,input					ram_seq_lock_03	
+	,input					ram_seq_lock_04	
+	,input					ram_seq_lock_05	
+	,input					ram_seq_lock_06	
+	,input					ram_seq_lock_07	
+	,input	[31:0]		ram_seq_num_r_00	
+	,input	[31:0]		ram_seq_num_r_01	
+	,input	[31:0]		ram_seq_num_r_02	
+	,input	[31:0]		ram_seq_num_r_03	
+	,input	[31:0]		ram_seq_num_r_04	
+	,input	[31:0]		ram_seq_num_r_05	
+	,input	[31:0]		ram_seq_num_r_06	
+	,input	[31:0]		ram_seq_num_r_07
+	,input	[7 :0]		ram_lock
+	
 );
 
 localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
@@ -67,7 +91,7 @@ reg	[31:0]	tcp_ack_num_in_r;
 reg	[ 3:0]	tcp_head_len_r;
 reg	[15:0]	tcp_data_len_r;
 reg	[4:0]		tcp_packet_counter;
-reg	[15:0]	tcp_window_r;
+reg	[31:0]	tcp_window_r;
 reg	[31:0]	ISS;	//initial sequence number
 reg	[31:0]	SND_NEXT;	//next sequence number
 reg	[31:0]	ACK_NEXT;
@@ -77,6 +101,10 @@ reg				tcp_op_rcv_rd_r;
 reg	[31:0]	test3_o_r;
 reg	[31:0]	test4_o_r;
 reg	[31:0]	test5_o_r;
+
+reg				old_data_en;
+reg				old_data_start;
+reg				old_data_lock;
 
 //	FLAG[5]	|	FLAG[4]	|	FLAG[3]	|	FLAG[2]	|	FLAG[1]	|	FLAG[0]
 //	URGENT	|	ACK		|	PUSH		|	RST		|	SYN		|	FIN
@@ -117,7 +145,14 @@ always @(posedge clk or negedge rst_n)
 	else if (tcp_op_rcv_rd_r)					tcp_op_rcv_rd_r <= 1'b0;
 	else if (!wdat_start_o & !tcp_start_o & !trnsmt_busy_i & tcp_op_rcv_i)
 														tcp_op_rcv_rd_r <= 1'b1;
-	
+//OLD DATA ENABLE FLAG
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									old_data_en <= 1'b0;
+	else if ((state == STATE_LISTEN) & ram_lock_any_i)	
+													old_data_en <= 1'b1;
+	else if ((state == STATE_ESTABLISHED) & !ram_lock_any_i)
+													old_data_en <= 1'b0;
+
 	
 
 
@@ -215,7 +250,7 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)												wdat_start <= 1'b0;
 	else if (state == STATE_CLOSED)					wdat_start <= 1'b0;	
 	else if (wdat_start)									wdat_start <= 1'b0;
-	else if (!tcp_op_rcv_i & !tcp_start_o & !wdat_lock & !trnsmt_busy_i & (tcp_packet_counter < 16) & (tcp_window_r > 25000) & (state == STATE_ESTABLISHED))//(tcp_window_r > 40000))
+	else if (!tcp_op_rcv_i & !tcp_start_o & !wdat_lock & !trnsmt_busy_i & (tcp_packet_counter < 16) & (tcp_window_r > 25000) & (state == STATE_ESTABLISHED) & !ram_lock_all_i & !old_data_en)
 																wdat_start <= 1'b1;
 
 //LOCK WRITE DATA	
@@ -225,7 +260,24 @@ always @(posedge clk or negedge rst_n)
 	else if (wdat_stop_i & (state == STATE_ESTABLISHED))//(ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED))
 																wdat_lock <= 1'b0;	
 	else if (wdat_start)		
-																wdat_lock <= 1'b1;														
+																wdat_lock <= 1'b1;	
+																
+//START OLD DATA WRITE
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												old_data_start <= 1'b0;
+	else if (state == STATE_CLOSED)					old_data_start <= 1'b0;	
+	else if (old_data_start)							old_data_start <= 1'b0;
+	else if (!tcp_op_rcv_i & !tcp_start_o & !old_data_lock & !trnsmt_busy_i & (tcp_window_r > 25000) & (state == STATE_ESTABLISHED) & old_data_en)
+																old_data_start <= 1'b1;		
+			
+//LOCK OLD DATA WRITE
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												old_data_lock <= 1'b0;
+	else if (state == STATE_CLOSED)					old_data_lock <= 1'b0;
+	else if (wdat_stop_i & (state == STATE_ESTABLISHED))
+																old_data_lock <= 1'b0;	
+	else if (old_data_start)		
+																old_data_lock <= 1'b1;						
 
 //TCP FLAGS REG FOR WRITE OPERATIONS
 always @(posedge clk or negedge rst_n)
@@ -238,6 +290,8 @@ always @(posedge clk or negedge rst_n)
 																tcp_flags_r <= 6'h12;															
 
 	else if (wdat_start & (state == STATE_ESTABLISHED))
+																tcp_flags_r <= 6'h18;
+	else if (old_data_start & (state == STATE_ESTABLISHED))
 																tcp_flags_r <= 6'h18;
 	else if (ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_flags_r <= 6'h10;
@@ -274,9 +328,14 @@ always @(posedge clk or negedge rst_n)
 																tcp_seq_num_r <= tcp_ack_num_i;//tcp_seq_num_r + 1'b1;
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))		
 																tcp_seq_num_r <= ISS;//tcp_seq_num_r + 1'b1;
+	else if (ack_rcv & (state == STATE_SYN_RCVD))
+																tcp_seq_num_r <= tcp_seq_num_r + 1'b1;
 																
 	else if (wdat_stop_i & wdat_lock & (state == STATE_ESTABLISHED))
 																tcp_seq_num_r <= tcp_seq_num_r + TCP_DATA_LENGTH_IN_BYTE;
+	else if (old_data_en & !rst_rcv & ack_rcv & (tcp_seq_num_r + 16'd1450 <= tcp_ack_num_i) & (state == STATE_ESTABLISHED))
+																tcp_seq_num_r <= tcp_seq_num_r + TCP_DATA_LENGTH_IN_BYTE;													
+																
 																
 	else if (state == STATE_CLOSE_WAIT)				tcp_seq_num_r <= tcp_seq_num_r + 1'b1;																
 
@@ -318,6 +377,8 @@ always @(posedge clk or negedge rst_n)
 //`ifdef DATA_TX
 	else if (wdat_start & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= TCP_DATA_LENGTH_IN_BYTE;
+	else if (old_data_start & (state == STATE_ESTABLISHED))
+																tcp_data_len_r <= TCP_DATA_LENGTH_IN_BYTE;																
 //`else
 	else if (ack_rcv & (tcp_data_len_i != 0) & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= 16'd00;
@@ -348,9 +409,9 @@ always @(posedge clk or negedge rst_n)
 
 //WINDOW SIZE RECEIVE FOR BUFFER LOAD CONTROL
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)												tcp_window_r <= 16'd0;
+	if (!rst_n)												tcp_window_r <= 32'd0;
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & (state == STATE_SYN_RCVD))
-																tcp_window_r <= tcp_window_i;
+																tcp_window_r <= {16'b0, tcp_window_i};
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o  & (state == STATE_ESTABLISHED))
 																tcp_window_r <= tcp_ack_num_i + tcp_window_i - tcp_seq_num_r;
 	
@@ -377,6 +438,7 @@ assign tcp_ack_num_diff = (tcp_seq_num_r > tcp_ack_num_in_r) ? (tcp_seq_num_r - 
 															
 	
 assign wdat_start_o			= wdat_start;
+assign old_data_start_o		= old_data_start;
 assign tcp_data_len_o		= tcp_data_len_r;
 assign tcp_flags_o			= tcp_flags_r;
 assign tcp_start_o			= sack_start | fin_start | ack_start | rst_start;
@@ -386,6 +448,9 @@ assign tcp_seq_num_o			= tcp_seq_num_r;
 assign tcp_ack_num_o			= tcp_ack_num_r;
 assign tcp_head_len_o		= tcp_head_len_r;
 assign tcp_op_rcv_rd_o		= tcp_op_rcv_rd_r;
+assign tcp_state_listen_o	= (state == STATE_LISTEN);
+assign tcp_state_estblsh_o	= (state == STATE_ESTABLISHED);
+assign old_data_en_o			= old_data_en;
 
 assign test_o = tcp_ack_num_diff;
 assign tet2_o = {31'b0, {(tcp_window_r < 6000)}};
