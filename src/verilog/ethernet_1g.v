@@ -353,7 +353,7 @@ assign  Mdio=MdoEn?Mdo:1'bz;
 
 
 //--------------------------------------------------------------------------------//
-//									ALTERA GMII-RGMII(mot used 									 //
+//									ALTERA GMII-RGMII(not used) 									 //
 //--------------------------------------------------------------------------------//
 //ALTERA GMII TO RGMII CONVERTER
 altera_gmii_to_rgmii_adapter #(TX_PIPELINE_DEPTH, RX_PIPELINE_DEPTH, USE_ALTGPIO) altera_gmii_to_rgmii_adapter	 
@@ -484,62 +484,6 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 	Rx_mac_eop_r <= 1'b0;
 	else 				Rx_mac_eop_r <= Rx_mac_eop & Rx_mac_ra;
 
-//RESYNC FIFO(TRANCEIVER TO MAC)
-/*
-fifo_resync fifo10_read
-(
-	.data			(	data_to_fifo	)
-	,.rdclk		(	clk_125			)
-	,.rdreq		(	!fifo_empty		)// & !rgmii_ctl_neg	)
-	,.wrclk		(	rgmii_rx_clk	)
-	,.wrreq		(	rxdv_to_mac		)
-	,.q			(	data_from_fifo	)
-	,.rdempty	(	fifo_empty		)
-	,.wrfull		(	fifo_full		)
-);
-
-//MAC TO CONTROLLER DATA FIFO
-fifo32 fifo32_read_data_mac
-(
-	.data			(	fifo32_rd_mac_data_in	)
-	,.rdclk		(	clk							)
-	,.rdreq		(	fifo32_rd_mac_read		)
-	,.wrclk		(	clk							)
-	,.wrreq		(	fifo32_rd_mac_write		)
-	,.q			(	fifo32_rd_mac_data_out	)
-	,.rdempty	(	fifo32_rd_mac_empty		)
-	,.wrfull		(	fifo32_rd_mac_full		)
-);
-
-//MAC TO CONTROLLER CONTROL FIFO
-fifo4 fifo4_read_ctl_mac
-(
-	.data			(	fifo4_rd_mac_data_in		)
-	,.rdclk		(	clk							)
-	,.rdreq		(	fifo4_rd_mac_read			)
-	,.wrclk		(	clk							)
-	,.wrreq		(	fifo4_rd_mac_write		)
-	,.q			(	fifo4_rd_mac_data_out	)
-	,.rdempty	(	fifo4_rd_mac_empty		)
-	,.wrfull		(	fifo4_rd_mac_full			)
-);
-
-
-assign fifo32_rd_mac_data_in	= Rx_mac_data;
-assign fifo32_rd_mac_write		= Rx_mac_pa;
-assign fifo32_rd_mac_read		= !fifo32_rd_mac_empty;
-
-assign fifo4_rd_mac_data_in	= {Rx_mac_BE, Rx_mac_eop, Rx_mac_sop};
-assign fifo4_rd_mac_write		= Rx_mac_pa;
-assign fifo4_rd_mac_read		= !fifo4_rd_mac_empty;
-
-assign data_layer_rdat	= fifo32_rd_mac_data_out;
-assign data_layer_rbe	= fifo4_rd_mac_data_out[3:2];
-assign data_layer_rpa	= fifo32_rd_mac_read;
-assign data_layer_reop	= fifo4_rd_mac_data_out[1] & data_layer_rpa;
-assign data_layer_rsop	= fifo4_rd_mac_data_out[0] & data_layer_rpa;
-*/
-
 //READ DATA LINK LAYER(AFTER MAC)
 //--------------------------------------------------
 data_layer data_layer
@@ -625,7 +569,7 @@ transport_layer transport_layer
 	,.pseudo_crc_sum	(	nl_pseudo_crc	)
 	
 	,.source_port_o	(	tcp_source_port_i	)
-	,.dest_port_o		()
+	,.dest_port_o		(	tcp_dest_port_i	)
 	,.packet_length_o	()
 	,.checksum_o		()
 	,.seq_num_o			(	tcp_seq_num_i		)
@@ -679,7 +623,10 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 																	crc_err <= 1'b0;
 	else if (udp_upper_op_end & (udp_crc_sum != 16'hFFFF))			crc_err <= 1'b1;
-
+	
+	
+//--------------------------------------------------------------------------------//
+//LEDS OUTPUT
 reg [31:0] 	led_timer;
 reg			led_on;
 wire			led_timer_pas;
@@ -702,8 +649,10 @@ assign User_led3 = !crc_err;
 
 //--------------------------------------------------------------------------------//
 //FIFO for control signals collection
-//
+
 wire	[101:0] ctrl_fifo_i = {tcp_data_len_i[15:0], tcp_flags_i[5:0], tcp_window_i[15:0], tcp_seq_num_i[31:0], tcp_ack_num_i[31:0]};
+
+assign tcp_data_len_i = nl_up_data_len - (tcp_head_len_i*4); 
 
 umio_fifo #(16, 102) fifo_ctrl
 (
@@ -744,63 +693,52 @@ assign packet_drop = (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i != packet_n
 //--------------------------------------------------------------------------------//
 //										TCP CONTROLLER													 //
 //--------------------------------------------------------------------------------//
-tcp_controller	tcp_controller
+tcp_controller	#(WRAM_NUM) tcp_controller
 (
-	.clk						(	pll_62_5m_clk	)
-	,.rst_n					(	rst_n				)
+	.clk							(		pll_62_5m_clk				)
+	,.rst_n						(		rst_n							)
 	
-	,.tcp_op_rcv_i			(	!fifo_ctrl_empty	)
-	,.tcp_source_port_i	(	tcp_source_port_i	)
-	,.tcp_dest_port_i		(	tcp_dest_port_i	)	
-	,.tcp_flags_i			(	tcp_flags_ii		)
-	,.tcp_seq_num_i		(	tcp_seq_num_ii		)
-	,.tcp_ack_num_i		(	tcp_ack_num_ii		)
-	,.tcp_options_i		(							)
-	,.tcp_data_len_i		(	tcp_data_len_ii	)
-	,.tcp_window_i			(	tcp_window_ii		)
-	,.tcp_op_rcv_rd_o		(	tcp_op_rcv_rd_o	)
+	//INPUT PARAMETERS FROM TCP RECEIVED PACKET
+	,.tcp_op_rcv_i				(		!fifo_ctrl_empty			)
+	,.tcp_source_port_i		(		tcp_source_port_i			)
+	,.tcp_dest_port_i			(		tcp_dest_port_i			)	
+	,.tcp_flags_i				(		tcp_flags_ii				)
+	,.tcp_seq_num_i			(		tcp_seq_num_ii				)
+	,.tcp_ack_num_i			(		tcp_ack_num_ii				)
+	,.tcp_options_i			(										)
+	,.tcp_data_len_i			(		tcp_data_len_ii			)
+	,.tcp_window_i				(		tcp_window_ii				)
+	,.tcp_op_rcv_rd_o			(		tcp_op_rcv_rd_o			)
+	
+	//INPUT FLAGS/DATA PARAMETERS FROM MUX
+//	,.ram_dat_rdy_i			(		wram_rdat_rdy				)
+//	,.ram_oldseq_flg_i		(		wram_oldseq_flg			)
+	,.ram_dat_len_i			(		wram_wdat_len				)
+	
 
-	,.tcp_source_port_o	(	tcp_source_port_o	)
-	,.tcp_dest_port_o		(	tcp_dest_port_o	)
-	,.tcp_flags_o			(	tcp_flags_o			)
-	,.tcp_seq_num_o		(	tcp_seq_num_o		)
-	,.tcp_ack_num_o		(	tcp_ack_num_o		)
-	,.tcp_head_len_o		(	tcp_head_len_o		)
-	,.tcp_start_o			(	tcp_start_o			)
-	,.tcp_data_len_o		(	tcp_data_len_o		)
-	,.tcp_write_op_end_i	(							)
-	,.wdat_start_o			(	wdat_start_o		)
-	,.wdat_stop_i			(	udp_eop				)
-	,.trnsmt_busy_i		(	tcp_controller_busy	)
-	,.ram_lock_all_i		(	ram_lock_all		)
-	,.ram_lock_any_i		(	ram_lock_any		)
-	,.old_data_start_o	(	old_data_start_o	)
-	,.tcp_state_listen_o	(	tcp_ctrl_state_idle)
-	,.tcp_state_estblsh_o(	tcp_state_estblsh_o)
-	,.old_data_en_o		(	old_data_en_o		)
+	//OUTPUT PARAMETERS TO SEND TCP PACKET
+	,.tcp_source_port_o		(		tcp_source_port_o			)
+	,.tcp_dest_port_o			(		tcp_dest_port_o			)
+	,.tcp_flags_o				(		tcp_flags_o					)
+	,.tcp_seq_num_o			(		tcp_seq_num_o				)
+	,.tcp_ack_num_o			(		tcp_ack_num_o				)
+	,.tcp_head_len_o			(		tcp_head_len_o				)
+	,.ctrl_cmd_start_o		(		tcp_ctrl_cmd_start_o		)
+	,.tcp_data_len_o			(		tcp_data_len_o				)
+	,.tcp_wdat_start_o		(		wdat_start_o				)
+	,.tcp_wdat_stop_i			(		udp_eop						)
+	,.tcp_options_len_i		(		tcp_options_len			)
+	,.tcp_seq_num_next_o		(		tcp_seq_num_next			)
+	,.trnsmt_busy_i			(		tcp_controller_busy		)
+	,.tcp_state_listen_o		(		tcp_ctrl_state_idle		)
+	,.tcp_state_estblsh_o	(		tcp_state_estblsh_o		)
 	
-	,.ram_seq_lock_00		(	ram_seq_lock_00	)
-	,.ram_seq_lock_01		(	ram_seq_lock_01	)
-	,.ram_seq_lock_02		(	ram_seq_lock_02	)
-	,.ram_seq_lock_03		(	ram_seq_lock_03	)
-	,.ram_seq_lock_04		(	ram_seq_lock_04	)
-	,.ram_seq_lock_05		(	ram_seq_lock_05	)
-	,.ram_seq_lock_06		(	ram_seq_lock_06	)
-	,.ram_seq_lock_07		(	ram_seq_lock_07	)
-	,.ram_seq_num_r_00	(	ram_seq_num_r_00	)
-	,.ram_seq_num_r_01	(	ram_seq_num_r_01	)
-	,.ram_seq_num_r_02	(	ram_seq_num_r_02	)
-	,.ram_seq_num_r_03	(	ram_seq_num_r_03	)
-	,.ram_seq_num_r_04	(	ram_seq_num_r_04	)
-	,.ram_seq_num_r_05	(	ram_seq_num_r_05	)
-	,.ram_seq_num_r_06	(	ram_seq_num_r_06	)
-	,.ram_seq_num_r_07	(	ram_seq_num_r_07	)
-	,.ram_lock				(	ram_lock				)
-	
-	
+	,.mem_wr_lock_flg_i		(		wmem_wr_lock_flg			)
+	,.mem_rd_lock_flg_i		(		wmem_rd_lock_flg			)
+	,.mem_rd_seq_lock_flg_i	(		wmem_rd_seq_lock_flg		)
+	,.med_rd_ack_i				(		wmem_rdat_ack				)
+	,.mem_data_sel_o			(		wram_wdat_sel				)
 );
-
-assign tcp_data_len_i = nl_up_data_len - (tcp_head_len_i*4); 
 
 //--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
@@ -814,7 +752,7 @@ wire	[15:0]		mac_type				= 16'h08_00;
 wire	[ 3:0]		ip_version			= 4'h4;
 wire	[ 3:0]		ip_head_len			= 4'h5;
 wire	[ 7:0]		ip_dsf				= 8'h00;
-wire	[15:0]		ip_total_len		= 16'd20/*ip length*/ + (tcp_head_len_o*16'd4)/*udp header length*/ + tcp_data_len_o;
+wire	[15:0]		ip_total_len		= 16'd20/*ip length*/ + (tcp_head_len_o*16'd4)/*udp header length*/ + tcp_data_len_mux;
 wire	[15:0]		ip_id					= 16'h64_D7;		//25815
 wire	[ 2:0]		ip_flag				= 3'h0;
 wire	[13:0]		ip_frag_offset		= 13'h00_00;		
@@ -839,7 +777,7 @@ wire	[31:0]		tcp_ack_num_o;
 wire	[15:0]		tcp_data_len_i; 
 wire	[ 3:0]		tcp_head_len_i;
 wire	[ 3:0]		tcp_head_len_o;
-wire					old_data_en_o;
+//wire					old_data_en_o;
 
 wire	[31:0]		tcp_seq_num			= 32'h0000_0001;
 wire	[31:0]		tcp_ack_num			= tcp_seq_num_i + 1'b1;//32'h0000_0000;
@@ -847,10 +785,12 @@ wire	[ 3:0]		tcp_head_len		= 4'h8;
 wire	[ 5:0]		tcp_flags			= 6'h012;
 wire	[ 5:0]		tcp_flags_i;
 wire	[ 5:0]		tcp_flags_o;
-wire					tcp_start_o;
+wire					tcp_ctrl_cmd_start_o;
 wire	[15:0]		tcp_window			= 16'd40000;						//TODO change size
 wire	[15:0]		tcp_urgent_ptr		= 16'h0000;
-wire	[95:0]		tcp_options			= 96'h020405b4_01_030308_01_01_0402;
+wire	[95:0]		tcp_options			= 96'h020405b4_01_030308_01_01_0402; //SACK PERMITTED
+wire	[ 3:0]		tcp_options_len	= 4'd2;
+wire	[31:0]		tcp_seq_num_next;
 wire	[15:0]		udp_data_length	= UDP_DATA_LENGTH_IN_BYTE;
 wire	[15:0]		tcp_data_len_o;
 wire					wdat_start_o;
@@ -875,17 +815,16 @@ wire					udp_eop;
 //INPUT FROM FIFO
 wire					udp_data_out_rd;
 
-reg				start_reg;
-reg				start_lock;
-reg				udp_run;
-reg				udp_start;
-reg				udp_start_lock;
+reg				tcp_start;
+reg				tcp_run;
+reg				tcp_ctrl_data_flg;
+
+
 reg	[31:0]	udp_data_gen;
 reg	[63:0]	udp_packet_num;
 reg	[ 3:0]	udp_content_chkr;
 
-wire				udp_fifo_data_wr;
-reg	[15:0]	udp_fifo_data_wr_chkr;
+
 wire	[31:0]	udp_fifo_rdata;
 
 wire	[31:0]	udp_data_chksum_w;
@@ -896,838 +835,736 @@ reg	[15:0]	udp_data_chksum_r;
 
 wire				transmitter_work;
 
-//START AFTER WAIT
+//START TRANSMITTION
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									start_reg <= 1'b0;
-	else if (start_reg)							start_reg <= 1'b0;
-	else if (wdat_start_o & !start_lock)	start_reg <= 1'b1;
+	if (!rst_n) 									tcp_start <= 1'b0;
+	else if (tcp_start)							tcp_start <= 1'b0;
+	else if ((wdat_start_o | tcp_ctrl_cmd_start_o) & !tcp_run)		
+														tcp_start <= 1'b1;
 	
-//START LOCK
+//TRANSMITTION IN PROCESS
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									start_lock <= 1'b0;
-	else if (udp_eop)								start_lock <= 1'b0;
-	else if (wdat_start_o)						start_lock <= 1'b1;
+	if (!rst_n) 									tcp_run <= 1'b0;
+	else if (udp_eop) 							tcp_run <= 1'b0;
+	else if (tcp_start) 							tcp_run <= 1'b1;
 	
-//RUN DATA SEND TO FIFO
+//TRASMITTION FLAG(CONTROL OR DATA SEND)
+//0 - CONTROL DATA
+//1 - WRITE DATA
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									udp_run <= 1'b0;
-	else if (udp_eop)								udp_run <= 1'b0;
-	else if (start_reg)							udp_run <= 1'b1;
-	
-assign udp_fifo_data_wr = udp_run & (udp_fifo_data_wr_chkr < tcp_data_len_o);
+	if (!rst_n) 									tcp_ctrl_data_flg <= 1'b0;
+	else if (tcp_ctrl_cmd_start_o & !tcp_start & !tcp_run)
+														tcp_ctrl_data_flg <= 1'b0;
+	else if (wdat_start_o & !tcp_start & !tcp_run)		
+														tcp_ctrl_data_flg <= 1'b1;
+														
 
-//UDP DATA SEND TO FIFO COUNTER
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									udp_fifo_data_wr_chkr <= 16'b0;
-	else if (udp_eop)								udp_fifo_data_wr_chkr <= 16'b0;
-	else if (udp_fifo_data_wr)					udp_fifo_data_wr_chkr <= udp_fifo_data_wr_chkr + 4'd4;
-	
-//START SEND DATA FROM FIFO TO UDP TRANSMITTER
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									udp_start <= 1'b0;
-	else if (udp_start)							udp_start <= 1'b0;
-	else if ((udp_fifo_data_wr_chkr >= tcp_data_len_o) & !udp_start_lock & udp_run)
-														udp_start <= 1'b1;	
-//START LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 									udp_start_lock <= 1'b0;
-	else if (udp_eop)								udp_start_lock <= 1'b0;
-	else if ((udp_fifo_data_wr_chkr >= tcp_data_len_o) & udp_run)
-														udp_start_lock <= 1'b1;
+//---------------------------------------------------------------------//
+//									DATA GENERATOR 									  //
+//---------------------------------------------------------------------//
+localparam		WRAM_NUM = 8;
 
-//UDP PACKET NUMBER OR UDP DATA SELECTOR
+reg	[31:0]	timer_reg_r;
+wire				timer_pas2;
+
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)													
+					timer_reg_r <= 32'd210_000_000;
+	else if (!timer_pas2)									
+					timer_reg_r <= timer_reg_r - 1'b1;
+	
+assign timer_pas2 = timer_reg_r == 0;
+
+
+localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
+
+reg 				gen_start;
+reg 				gen_run;	
+reg	[31:0]	gen_data;
+reg	[15:0]	gen_data_chkr;
+reg	[63:0]	gen_packet_num;
+reg	[ 3:0]	gen_content_chkr;
+reg	[4:0]		gen_mem_chkr;
+
+wire 				gen_stop;
+wire	[15:0]	gen_data_len;
+wire				gen_data_wr;
+wire				wr_mem_rdy_cur;
+wire				gen_mem_rdy;
+
+assign gen_data_len = TCP_DATA_LENGTH_IN_BYTE;
+assign gen_mem_rdy = timer_pas2 ? (
+												(gen_mem_chkr == 5'd7) ? !wmem_wr_lock_flg[7] : 
+												(gen_mem_chkr == 5'd6) ? !wmem_wr_lock_flg[6] : 
+												(gen_mem_chkr == 5'd5) ? !wmem_wr_lock_flg[5] : 
+												(gen_mem_chkr == 5'd4) ? !wmem_wr_lock_flg[4] : 
+												(gen_mem_chkr == 5'd3) ? !wmem_wr_lock_flg[3] : 
+												(gen_mem_chkr == 5'd2) ? !wmem_wr_lock_flg[2] :
+												(gen_mem_chkr == 5'd1) ? !wmem_wr_lock_flg[1] :
+												(gen_mem_chkr == 5'd0) ? !wmem_wr_lock_flg[0] :
+												1'b0) 
+												: 1'b0;
+
+
+//GEN MEMORY SWITCHER
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 
+					gen_mem_chkr <= WRAM_NUM - 1;
+	else if (gen_stop & (gen_mem_chkr == 0))
+					gen_mem_chkr <= WRAM_NUM - 1;
+	else if (gen_stop)
+					gen_mem_chkr <= gen_mem_chkr - 1'b1;
+
+//GEN DATA START 
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 
+					gen_start <= 1'b0;
+	else if (gen_start)
+					gen_start <= 1'b0;
+	else if (gen_mem_rdy & !gen_run)
+					gen_start <= 1'b1;
+
+//GEN DATA STOP
+assign gen_stop = gen_run & (gen_data_chkr + 4'd4 >= gen_data_len);
+					
+//GEN DATA RUN 
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 
+					gen_run <= 1'b0;
+	else if (gen_stop)
+					gen_run <= 1'b0;
+	else if (gen_start)
+					gen_run <= 1'b1;
+					
+//GEN DATA CHECHEK
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 									
+					gen_data_chkr <= 16'b0;
+					
+	else if (gen_stop)							
+					gen_data_chkr <= 16'b0;
+					
+	else if (gen_data_wr)						
+					gen_data_chkr <= gen_data_chkr + 4'd4;
+	
+//GEN DATA WRITE 
+assign gen_data_wr = gen_run;
+	
+//GEN PACKET NUMBER
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
-					udp_content_chkr <= 4'd4;
-	else if (udp_eop & udp_data_out_rd)
-					udp_content_chkr <= 4'd4;
-	else if (udp_fifo_data_wr & (udp_content_chkr != 4'd2))
-					udp_content_chkr <= udp_content_chkr - 1'b1;	
-				
-reg	[7:0]		usb_crc8_reg;
-wire	[7:0]		usb_crc8_w1;
-wire	[7:0]		usb_crc8_w2;
-				
-// CRC8 DATA
-crc8_ftdi crc8_data_high
-(
-	.data_i		(	udp_packet_num[15:8]	),
-	.crc_i		(	8'h1B						),
-	.crc_o		(	usb_crc8_w1				)
-);	
-
-crc8_ftdi crc8_data_low
-(
-	.data_i		(	udp_packet_num[7:0]	),
-	.crc_i		(	usb_crc8_w1				),
-	.crc_o		(	usb_crc8_w2				)
-);
-
+					gen_packet_num <= 64'b0;
+	else if (gen_stop)
+					gen_packet_num <= gen_packet_num + 1'b1;
+	
+//GEN DATA CONTENT 
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)					usb_crc8_reg <= 8'h00;
-	else if (start_reg)		usb_crc8_reg <= 8'hC6;//usb_crc8_w2;
-				
+	if (!rst_n)
+					gen_content_chkr <= 4'd4;
+	else if (gen_stop)
+					gen_content_chkr <= 4'd4;
+	else if (gen_data_wr & (gen_content_chkr != 4'd2))
+					gen_content_chkr <= gen_content_chkr - 1'b1;					
 
-//UDP DATA GENERATOR				
+//DATA GENERATION				
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)	
-					udp_data_gen <= udp_packet_num;
-	else if (start_reg)
-					udp_data_gen <= usb_prot_head0;//udp_packet_num[63:32];
-	else if ((udp_content_chkr == 4'd4) & udp_fifo_data_wr)
-					udp_data_gen <= {usb_prot_head1, udp_packet_num[15:0]};//udp_packet_num[31: 0];
-	else if ((udp_content_chkr == 4'd3) & udp_fifo_data_wr)
-					udp_data_gen <= udp_data_tr;	
-	else if ((udp_content_chkr == 4'd2) & udp_fifo_data_wr & (udp_fifo_data_wr_chkr == 16'd1440))
+					gen_data <= 0;
+					
+	else if (gen_start)
+					gen_data <= usb_prot_head0;
+					
+	else if ((gen_content_chkr == 4'd4) & gen_data_wr)
+					gen_data <= {usb_prot_head1, gen_packet_num[15:0]};
+					
+	else if ((gen_content_chkr == 4'd3) & gen_data_wr)
+					gen_data <= udp_data_tr;	
+					
+	else if ((gen_content_chkr == 4'd2) & gen_data_wr & (gen_data_chkr == 16'd1440))
 				begin
-					udp_data_gen[31:24] <= udp_data_gen[31:24] + 4'd4;
-					udp_data_gen[23:16] <= udp_data_gen[23:16] + 4'd4;//usb_crc8_reg;//8'h00;//8'hDD;
-					udp_data_gen[15: 8] <= 8'h00;
-					udp_data_gen[ 7: 0] <= 8'h00;
+					gen_data[31:24] <= gen_data[31:24] + 4'd4;
+					gen_data[23:16] <= gen_data[23:16] + 4'd4;//usb_crc8_reg;//8'h00;//8'hDD;
+					gen_data[15: 8] <= 8'h00;
+					gen_data[ 7: 0] <= {3'b0, gen_mem_chkr};//8'h00;
 				end	
 	
-	else if ((udp_content_chkr == 4'd2) & udp_fifo_data_wr)	
+	else if ((gen_content_chkr == 4'd2) & gen_data_wr)	
 				begin
-					udp_data_gen[31:24] <= udp_data_gen[31:24] + 4'd4;
-					udp_data_gen[23:16] <= udp_data_gen[23:16] + 4'd4;
-					udp_data_gen[15: 8] <= udp_data_gen[15: 8] + 4'd4;
-					udp_data_gen[ 7: 0] <= udp_data_gen[ 7: 0] + 4'd4;
+					gen_data[31:24] <= gen_data[31:24] + 4'd4;
+					gen_data[23:16] <= gen_data[23:16] + 4'd4;
+					gen_data[15: 8] <= gen_data[15: 8] + 4'd4;
+					gen_data[ 7: 0] <= gen_data[ 7: 0] + 4'd4;
 				end
+				
+//---------------------------------------------------------------------//
+//									CRC-ERR GENERATOR 								  //
+//---------------------------------------------------------------------//
+parameter		CRC_ERR_NUM = 4;
+reg	[31:0]	crc_err_num;
 
-//UDP PACKET NUMBER
+reg				crc_err_gen;
+reg	[31:0]	crc_err_gen_chkr;
+wire				crc_err_gen_chkr_pas;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 												crc_err_num <= CRC_ERR_NUM;
+	else if (crc_err_gen_chkr_pas & wdat_start_o & (crc_err_num > 32'hFFFF_D000))
+																	crc_err_num <= crc_err_num;
+	else if (crc_err_gen_chkr_pas & wdat_start_o)	crc_err_num <= crc_err_num + 1000;
+	
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)													crc_err_gen_chkr <= CRC_ERR_NUM;
+	else if (crc_err_gen_chkr_pas & wdat_start_o)	crc_err_gen_chkr <= crc_err_num;
+	else if (wdat_start_o)									crc_err_gen_chkr <= crc_err_gen_chkr - 1'b1;
+	
+assign crc_err_gen_chkr_pas = crc_err_gen_chkr == 0;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)													crc_err_gen <= 1'b0;
+	else if (udp_eop)											crc_err_gen <= 1'b0;
+	else if (wdat_start_o & crc_err_gen_chkr_pas)	crc_err_gen <= 1'b1;
+	
+
+//---------------------------------------------------------------------//
+//									CHECKSUM GENERATOR 								  //
+//---------------------------------------------------------------------//
+wire	[31:0]	gen_data_chksum_w;
+wire	[31:0]	gen_data_chksum_ww;
+wire	[31:0]	gen_data_chksum_www;
+wire	[15:0]	gen_data_chksum;
+reg	[15:0]	gen_data_chksum_r;
+
+assign gen_data_chksum_w =	(gen_data_chkr + 4'd1 == gen_data_len) ? {gen_data[31:24], 8'h00} :
+									(gen_data_chkr + 4'd2 == gen_data_len) ?  gen_data[31:16] :
+									(gen_data_chkr + 4'd3 == gen_data_len) ? (gen_data[31:16] + {gen_data[15:8], 8'h00}) : (gen_data[31:16] + gen_data[15:0]);
+									
+assign gen_data_chksum_ww	= gen_data_chksum_w + gen_data_chksum_r[15:0];
+assign gen_data_chksum_www	= gen_data_chksum_ww[31:16] + gen_data_chksum_ww[15:0];
+assign gen_data_chksum		= gen_data_chksum_www[31:16] + gen_data_chksum_www[15:0];
+
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
-					udp_packet_num <= 64'b0;
-	else if (udp_eop & udp_data_out_rd & udp_run)
-					udp_packet_num <= udp_packet_num + 1'b1;	
-					
-//UDP DATA CRC
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)							udp_data_chksum_r <= 16'b0;
-//	else if (udp_eop)					udp_data_chksum_r <= 16'b0;
-	else if (start_reg | tcp_start_o)
-											udp_data_chksum_r <= 16'b0;
-	else if (udp_fifo_data_wr)		udp_data_chksum_r <= udp_data_chksum;
-	else if (old_data_start_o)		udp_data_chksum_r <= ram_data_chksum;
+									gen_data_chksum_r <= 16'b0;
+	else if (gen_start)
+									gen_data_chksum_r <= 16'b0;
+	else if (gen_data_wr)
+									gen_data_chksum_r <= gen_data_chksum;
+//---------------------------------------------------------------------//
+//									MEMORY 00 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_00			= wram_wr_cnt == 6'd0;
+wire				wmem_rd_sel_00			= wram_wdat_sel[0];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_00		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_00				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_00;
+wire	[31:0]	wmem_rd_seq_num_00;
+wire	[15:0]	wmem_rd_chksum_00;
+wire	[15:0]	wmem_rd_len_00;
+
+
+tcp_wr_memory #(1450)	tcp_wr_memory_00
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
 	
-assign udp_data_chksum_w =	(udp_fifo_data_wr_chkr + 4'd1 == tcp_data_len_o) ? {udp_data_gen[31:24], 8'h00} : 
-									(udp_fifo_data_wr_chkr + 4'd2 == tcp_data_len_o) ?  udp_data_gen[31:16] : 
-									(udp_fifo_data_wr_chkr + 4'd3 == tcp_data_len_o) ? (udp_data_gen[31:16] + {udp_data_gen[15:8], 8'h00}) : (udp_data_gen[31:16] + udp_data_gen[15:0]);
-									
-assign udp_data_chksum_ww	= udp_data_chksum_w + udp_data_chksum_r[15:0];
-assign udp_data_chksum_www	= udp_data_chksum_ww[31:16] + udp_data_chksum_ww[15:0];
-assign udp_data_chksum		= udp_data_chksum_www[31:16] + udp_data_chksum_www[15:0];	//= udp_data_chksum_ww[31:16] + udp_data_chksum_ww[15:0]; TODO for resend test
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)		
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)		
+	,.wr_i								(		wmem_wr_00					)
+	,.wr_sel_i							(		wmem_wr_sel_00				)
+	,.wr_op_stop_i						(		wmem_wr_stop_00			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[0]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_00				)
+	,.rdat_o								(		wmem_rdat_00				)
+	,.rd_chksum_o						(		wmem_rd_chksum_00			)
+	,.rd_len_o							(		wmem_rd_len_00				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[0]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_00		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[0]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
+	,.rd_data_ack_o					(		wmem_rdat_ack[0]			)
+);
 
-//RAM TO COLLECT UDP DATA	
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-localparam RAM_NUMBER = 8;
+//---------------------------------------------------------------------//
+//									MEMORY 01 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_01			= wram_wr_cnt == 6'd1;
+wire				wmem_rd_sel_01			= wram_wdat_sel[1];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_01		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_01				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_01;
+wire	[31:0]	wmem_rd_seq_num_01;
+wire	[15:0]	wmem_rd_chksum_01;
+wire	[15:0]	wmem_rd_len_01;
 
-reg	[5:0]					ram_cnt;
+
+
+tcp_wr_memory #(1450)	tcp_wr_memory_01
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
+	
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)		
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)
+	,.wr_i								(		wmem_wr_01					)
+	,.wr_sel_i							(		wmem_wr_sel_01				)
+	,.wr_op_stop_i						(		wmem_wr_stop_01			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[1]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_01				)
+	,.rdat_o								(		wmem_rdat_01				)
+	,.rd_chksum_o						(		wmem_rd_chksum_01			)
+	,.rd_len_o							(		wmem_rd_len_01				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[1]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_01		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[1]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop	& tcp_ctrl_data_flg		)
+	,.rd_data_ack_o					(		wmem_rdat_ack[1]			)
+);
+
+//---------------------------------------------------------------------//
+//									MEMORY 02 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_02			= wram_wr_cnt == 6'd2;
+wire				wmem_rd_sel_02			= wram_wdat_sel[2];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_02		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_02				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_02;
+wire	[31:0]	wmem_rd_seq_num_02;
+wire	[15:0]	wmem_rd_chksum_02;
+wire	[15:0]	wmem_rd_len_02;
+
+
+
+tcp_wr_memory #(1450)	tcp_wr_memory_02
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
+	
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)
+	,.wr_i								(		wmem_wr_02					)
+	,.wr_sel_i							(		wmem_wr_sel_02				)
+	,.wr_op_stop_i						(		wmem_wr_stop_02			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[2]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_02				)
+	,.rdat_o								(		wmem_rdat_02				)
+	,.rd_chksum_o						(		wmem_rd_chksum_02			)
+	,.rd_len_o							(		wmem_rd_len_02				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[2]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_02		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[2]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop	& tcp_ctrl_data_flg		)
+	,.rd_data_ack_o					(		wmem_rdat_ack[2]			)
+);
+
+//---------------------------------------------------------------------//
+//									MEMORY 03 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_03			= wram_wr_cnt == 6'd3;
+wire				wmem_rd_sel_03			= wram_wdat_sel[3];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_03		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_03				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_03;
+wire	[31:0]	wmem_rd_seq_num_03;
+wire	[15:0]	wmem_rd_chksum_03;
+wire	[15:0]	wmem_rd_len_03;
+
+
+
+tcp_wr_memory #(1450)	tcp_wr_memory_03
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
+	
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)
+	,.wr_i								(		wmem_wr_03					)
+	,.wr_sel_i							(		wmem_wr_sel_03				)
+	,.wr_op_stop_i						(		wmem_wr_stop_03			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[3]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_03				)
+	,.rdat_o								(		wmem_rdat_03				)
+	,.rd_chksum_o						(		wmem_rd_chksum_03			)
+	,.rd_len_o							(		wmem_rd_len_03				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[3]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_03		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[3]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop	& tcp_ctrl_data_flg		)
+	,.rd_data_ack_o					(		wmem_rdat_ack[3]			)
+);
+
+//---------------------------------------------------------------------//
+//									MEMORY 04 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_04			= wram_wr_cnt == 6'd4;
+wire				wmem_rd_sel_04			= wram_wdat_sel[4];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_04		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_04				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_04;
+wire	[31:0]	wmem_rd_seq_num_04;
+wire	[15:0]	wmem_rd_chksum_04;
+wire	[15:0]	wmem_rd_len_04;
+
+tcp_wr_memory #(1450)	tcp_wr_memory_04
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
+	
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)		
+	,.wr_i								(		wmem_wr_04					)
+	,.wr_sel_i							(		wmem_wr_sel_04				)
+	,.wr_op_stop_i						(		wmem_wr_stop_04			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[4]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_04				)
+	,.rdat_o								(		wmem_rdat_04				)
+	,.rd_chksum_o						(		wmem_rd_chksum_04			)
+	,.rd_len_o							(		wmem_rd_len_04				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[4]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_04		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[4]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
+	,.rd_data_ack_o					(		wmem_rdat_ack[4]			)
+);
+
+//---------------------------------------------------------------------//
+//									MEMORY 05 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_05			= wram_wr_cnt == 6'd5;
+wire				wmem_rd_sel_05			= wram_wdat_sel[5];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_05		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_05				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_05;
+wire	[31:0]	wmem_rd_seq_num_05;
+wire	[15:0]	wmem_rd_chksum_05;
+wire	[15:0]	wmem_rd_len_05;
+
+tcp_wr_memory #(1450)	tcp_wr_memory_05
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
+	
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)		
+	,.wr_i								(		wmem_wr_05					)
+	,.wr_sel_i							(		wmem_wr_sel_05				)
+	,.wr_op_stop_i						(		wmem_wr_stop_05			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[5]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_05				)
+	,.rdat_o								(		wmem_rdat_05				)
+	,.rd_chksum_o						(		wmem_rd_chksum_05			)
+	,.rd_len_o							(		wmem_rd_len_05				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[5]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_05		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[5]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
+	,.rd_data_ack_o					(		wmem_rdat_ack[5]			)
+);
+
+//---------------------------------------------------------------------//
+//									MEMORY 06 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_06			= wram_wr_cnt == 6'd6;
+wire				wmem_rd_sel_06			= wram_wdat_sel[6];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_06		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_06				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_06;
+wire	[31:0]	wmem_rd_seq_num_06;
+wire	[15:0]	wmem_rd_chksum_06;
+wire	[15:0]	wmem_rd_len_06;
+
+tcp_wr_memory #(1450)	tcp_wr_memory_06
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
+	
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)		
+	,.wr_i								(		wmem_wr_06					)
+	,.wr_sel_i							(		wmem_wr_sel_06				)
+	,.wr_op_stop_i						(		wmem_wr_stop_06			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[6]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_06				)
+	,.rdat_o								(		wmem_rdat_06				)
+	,.rd_chksum_o						(		wmem_rd_chksum_06			)
+	,.rd_len_o							(		wmem_rd_len_06				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[6]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_06		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[6]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
+	,.rd_data_ack_o					(		wmem_rdat_ack[6]			)
+);
+
+//---------------------------------------------------------------------//
+//									MEMORY 07 											  //
+//---------------------------------------------------------------------//
+wire				wmem_wr_sel_07			= wram_wr_cnt == 6'd7;
+wire				wmem_rd_sel_07			= wram_wdat_sel[7];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
+wire				wmem_wr_stop_07		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
+wire				wmem_wr_07				= gen_data_wr; 		// udp_fifo_data_wr
+wire	[31:0]	wmem_rdat_07;
+wire	[31:0]	wmem_rd_seq_num_07;
+wire	[15:0]	wmem_rd_chksum_07;
+wire	[15:0]	wmem_rd_len_07;
+
+tcp_wr_memory #(1450)	tcp_wr_memory_07
+(
+	.clk									(		pll_62_5m_clk				)
+	,.rst_n								(		rst_n							)
+	
+	//INPUT DATA																	
+	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
+	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
+	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
+	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
+	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
+	
+	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
+	,.seq_num_i							(		tcp_seq_num_o				)
+	
+	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+	,.wdat_i								(		gen_data						)
+	,.wdat_chksum_i					(		gen_data_chksum			)
+	,.wdat_len_i						(		gen_data_len				)		
+	,.wr_i								(		wmem_wr_07					)
+	,.wr_sel_i							(		wmem_wr_sel_07				)
+	,.wr_op_stop_i						(		wmem_wr_stop_07			)
+	,.wr_lock_flg_o					(		wmem_wr_lock_flg[7]		)
+	
+	//OUTPUT DATA
+	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
+	,.rd_sel_i							(		wmem_rd_sel_07				)
+	,.rdat_o								(		wmem_rdat_07				)
+	,.rd_chksum_o						(		wmem_rd_chksum_07			)
+	,.rd_len_o							(		wmem_rd_len_07				)
+	,.rd_lock_flg_o					(		wmem_rd_lock_flg[7]		)
+	,.rd_seq_num_o						(		wmem_rd_seq_num_07		)
+	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[7]	)
+	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
+	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
+	,.rd_data_ack_o					(		wmem_rdat_ack[7]			)
+);
+
+
+//---------------------------------------------------------------------//
+//									WRITE ARBITER/MUX	 								  //
+//---------------------------------------------------------------------//
+reg	[5:0]		wram_wr_cnt;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)								wram_wr_cnt <= WRAM_NUM - 1;
+	else if (gen_stop & (wram_wr_cnt == 0))
+												wram_wr_cnt <= WRAM_NUM - 1;
+	else if (gen_stop)					wram_wr_cnt <= wram_wr_cnt - 1'b1;
+
+//---------------------------------------------------------------------//
+//									READ ARBITER/MUX	 								  //
+//---------------------------------------------------------------------//
+wire	[WRAM_NUM-1:	0]	wram_wdat_rdy;
+wire	[WRAM_NUM-1:	0]	wram_wdat_sel;
+//wire	[WRAM_NUM-1:	0]	wram_wdat_oldseq_mux;
+//wire							wram_oldseq_flg;
+wire	[WRAM_NUM-1:	0]	wram_unconf_port_mask;
+wire	[WRAM_NUM-1:	0] wram_unconf_dat_sel;
+//wire							wram_unconf_dat_stop;
+wire	[15:0]				wram_wdat_len;
+wire	[31:0]				wram_seq_num;
+wire	[15:0]				wram_dat_chksum;
+wire							wram_rdat_rdy;
+//wire	[WRAM_NUM-1:	0]	wram_unconf_dat_rdy;
+wire	[WRAM_NUM-1:	0]	wmem_wr_lock_flg;
+wire	[WRAM_NUM-1:	0]	wmem_rd_lock_flg;
+wire	[WRAM_NUM-1:	0]	wmem_rd_seq_lock_flg;
+wire	[WRAM_NUM-1:	0]	wmem_rdat_ack;
+
+
+reg	[5:0]					ram_wr_cnt;
 wire	[5:0]					ram_prev_unconf;
-wire							ram_lock_all;
-wire							ram_lock_any;
-wire	[15:0]				ram_lock_list;
-wire	[RAM_NUMBER-1:0]	ram_lock;
-wire	[RAM_NUMBER-1:0]	ram_sel;
+
+
 wire	[15:0]				ram_data_chksum;
 reg							ram_lock_stop;
 reg							old_data_start;
 wire							ram_lock_mux;
+wire	[15:0]				ram_data_len;
+wire	[31:0]				ram_seq_num;
 
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 							old_data_start <= 1'b0;
-	else if (old_data_start)			old_data_start <= 1'b0;
-	else if (old_data_start_o)			old_data_start <= 1'b1;
+wire	[15:0]				tcp_data_chksum_mux;
+wire	[15:0]				tcp_data_len_mux;
+wire	[31:0]				tcp_seq_num_mux;					
 
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)								ram_cnt <= 0;
-	else if (udp_run & udp_eop & (ram_cnt == RAM_NUMBER - 1))
-												ram_cnt <= 0;
-	else if (udp_run & udp_eop)		ram_cnt <= ram_cnt + 1'b1;
-	else if (tcp_ctrl_state_idle)		ram_cnt <= ram_prev_unconf;			//TODO JUST FOR TEST
-	else if (old_data_en_o & !old_data_start_o & !old_data_start & !tcp_controller_busy & tcp_state_estblsh_o & !ram_lock_mux)
-												ram_cnt <= ram_cnt + 1'b1;
-												
-assign ram_lock_mux =	(ram_cnt == 6'd0) ? ram_lock[0] : 
-								(ram_cnt == 6'd1) ? ram_lock[1] : 
-								(ram_cnt == 6'd2) ? ram_lock[2] : 
-								(ram_cnt == 6'd3) ? ram_lock[3] : 
-								(ram_cnt == 6'd4) ? ram_lock[4] : 
-								(ram_cnt == 6'd5) ? ram_lock[5] : 
-								(ram_cnt == 6'd6) ? ram_lock[6] : 
-								(ram_cnt == 6'd7) ? ram_lock[7] : 
-								1'b0;			
+//MUX DATA FROM MEM
+assign udp_fifo_rdata = (wram_wdat_sel[7]) ? wmem_rdat_07:
+								(wram_wdat_sel[6]) ? wmem_rdat_06:
+								(wram_wdat_sel[5]) ? wmem_rdat_05:
+								(wram_wdat_sel[4]) ? wmem_rdat_04:
+								(wram_wdat_sel[3]) ? wmem_rdat_03:
+								(wram_wdat_sel[2]) ? wmem_rdat_02:
+								(wram_wdat_sel[1]) ? wmem_rdat_01:
+								(wram_wdat_sel[0]) ? wmem_rdat_00:
+								32'b0; 
+
+//MUX DATA CHECKSUM FROM MEM								
+assign wram_dat_chksum =(wram_wdat_sel[7]) ? wmem_rd_chksum_07:
+								(wram_wdat_sel[6]) ? wmem_rd_chksum_06:
+								(wram_wdat_sel[5]) ? wmem_rd_chksum_05:
+								(wram_wdat_sel[4]) ? wmem_rd_chksum_04:
+								(wram_wdat_sel[3]) ? wmem_rd_chksum_03:
+								(wram_wdat_sel[2]) ? wmem_rd_chksum_02:
+								(wram_wdat_sel[1]) ? wmem_rd_chksum_01:
+								(wram_wdat_sel[0]) ? wmem_rd_chksum_00:								
+								16'b0;
+ 
+//MUX DATA LENGTH FROM MEM							
+assign wram_wdat_len	= 	(wram_wdat_sel[7]) ? wmem_rd_len_07 :
+								(wram_wdat_sel[6]) ? wmem_rd_len_06 :
+								(wram_wdat_sel[5]) ? wmem_rd_len_05 :
+								(wram_wdat_sel[4]) ? wmem_rd_len_04 :
+								(wram_wdat_sel[3]) ? wmem_rd_len_03 :
+								(wram_wdat_sel[2]) ? wmem_rd_len_02 :
+								(wram_wdat_sel[1]) ? wmem_rd_len_01 :
+								(wram_wdat_sel[0]) ? wmem_rd_len_00 :
+								16'b0;
+
+//MUX SEQ NUM FROM MEM								
+assign wram_seq_num	=  (wram_wdat_sel[7]) ? wmem_rd_seq_num_07 :								
+								(wram_wdat_sel[6]) ? wmem_rd_seq_num_06 :
+								(wram_wdat_sel[5]) ? wmem_rd_seq_num_05 :								
+								(wram_wdat_sel[4]) ? wmem_rd_seq_num_04 :								
+								(wram_wdat_sel[3]) ? wmem_rd_seq_num_03 :								
+								(wram_wdat_sel[2]) ? wmem_rd_seq_num_02 :
+								(wram_wdat_sel[1]) ? wmem_rd_seq_num_01 :
+								(wram_wdat_sel[0]) ? wmem_rd_seq_num_00 :
+								32'b0;
 	
-device_arbiter #(RAM_NUMBER) unconfirmed_data_arb
-(
-	.clk						(pll_62_5m_clk)
-	,.rst_n					(rst_n)
-	
-	//Connection with end controller
-	,.wr_allow				(1'b1)
-	
-	//Connection with controllers
-	
-	,.dev_rdy				(ram_lock_list)	
-	,.sel						(ram_sel)		
-	
-	,.port_number			(ram_prev_unconf)
-	
-	
-	//Connection with encoder
-	,.start					()
-	,.stop					(ram_lock_stop)
-);											
-
-
-assign ram_lock = {ram_lock_r_07, ram_lock_r_06, ram_lock_r_05, ram_lock_r_04, ram_lock_r_03, ram_lock_r_02, ram_lock_r_01, ram_lock_r_00}; //
-assign udp_fifo_rdata = (ram_cnt == 6'd0) ? ram_rdata_00 :
-								(ram_cnt == 6'd1) ? ram_rdata_01 :
-								(ram_cnt == 6'd2) ? ram_rdata_02 :
-								(ram_cnt == 6'd3) ? ram_rdata_03 :
-								(ram_cnt == 6'd4) ? ram_rdata_04 :
-								(ram_cnt == 6'd5) ? ram_rdata_05 :
-								(ram_cnt == 6'd6) ? ram_rdata_06 :
-								(ram_cnt == 6'd7) ? ram_rdata_07 : 32'b0; 
-								
-assign ram_data_chksum =(ram_cnt == 6'd0) ? ram_data_chksum_00 :
-								(ram_cnt == 6'd1) ? ram_data_chksum_01 :
-								(ram_cnt == 6'd2) ? ram_data_chksum_02 :
-								(ram_cnt == 6'd3) ? ram_data_chksum_03 :
-								(ram_cnt == 6'd4) ? ram_data_chksum_04 :
-								(ram_cnt == 6'd5) ? ram_data_chksum_05 :
-								(ram_cnt == 6'd6) ? ram_data_chksum_06 :
-								(ram_cnt == 6'd7) ? ram_data_chksum_07 : 32'b0;
-assign ram_lock_all = ram_lock_r_00 & ram_lock_r_01 & ram_lock_r_02 & ram_lock_r_03 & ram_lock_r_04 & ram_lock_r_05 & ram_lock_r_06 & ram_lock_r_07; //: TODO ALL. USE &
-assign ram_lock_any = ram_lock_r_00 | ram_lock_r_01 | ram_lock_r_02 | ram_lock_r_03 | ram_lock_r_04 | ram_lock_r_05 | ram_lock_r_06 | ram_lock_r_07; //| 
-assign ram_lock_list = {ram_lock_r_07, ram_lock_r_06, ram_lock_r_05, ram_lock_r_04, ram_lock_r_03, ram_lock_r_02, ram_lock_r_01, ram_lock_r_00};
-
-
-//IRQ selected flag		
-integer n;
-always @(posedge clk or negedge rst_n)
-  if (!rst_n)			
-					ram_lock_stop	<= 1'b0;
-  else if (ram_lock_stop) 
-					ram_lock_stop <= 1'b0;	
-				
-  else if (|ram_sel & !ram_lock_stop)
-    for (n = 0; n < RAM_NUMBER; n = n + 1)
-      if (ram_sel[n] & !ram_lock_list[n])
-					ram_lock_stop <= 1'b1;
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_00;
-reg	[ 8:0]	ram_data_rd_addr_r_00;
-reg	[31:0]	ram_seq_num_r_00;
-reg				ram_lock_r_00;
-reg				ram_seq_lock_00;
-reg	[15:0]	ram_data_chksum_00;
-wire	[ 8:0]	ram_data_rd_addr_00;
-wire				ram_data_wr_00;
-wire	[31:0]	ram_rdata_00;
-
-ram2048	ram_data_00 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_00	)
-	,.wraddress				( ram_data_wr_addr_r_00	)
-	,.wren					( ram_data_wr_00			)
-	,.q						( ram_rdata_00				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_00 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_00 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_00 <= ram_data_wr_addr_r_00 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_00 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_00 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_00 <= ram_data_rd_addr_r_00 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_00 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_00)) & (ram_cnt == 6'd0))
-						ram_seq_num_r_00 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_00 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_00 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_00 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd0))
-						ram_seq_lock_00 <= 1'b1;
-
-
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_00 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_00 + 16'd1450) <= tcp_ack_num_i) & !old_data_en_o)
-						ram_lock_r_00 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_00 + 16'd1450) <= tcp_ack_num_i) & old_data_en_o & (ram_cnt == 6'd0))
-						ram_lock_r_00 <= 0;
-	else if (start_reg & (ram_cnt == 6'd0))
-						ram_lock_r_00 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_00 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd0))
-						ram_data_chksum_00 <= udp_data_chksum;
-
-						
-assign ram_data_rd_addr_00 = ram_data_rd_addr_r_00 + udp_data_in_rd;
-assign ram_data_wr_00 = udp_fifo_data_wr & (ram_cnt == 6'd0);
-
-
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_01;
-reg	[ 8:0]	ram_data_rd_addr_r_01;
-reg	[31:0]	ram_seq_num_r_01;
-reg				ram_lock_r_01;
-reg				ram_seq_lock_01;
-reg	[15:0]	ram_data_chksum_01;
-wire	[ 8:0]	ram_data_rd_addr_01;
-wire				ram_data_wr_01;
-wire	[31:0]	ram_rdata_01;
-
-ram2048	ram_data_01 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_01	)
-	,.wraddress				( ram_data_wr_addr_r_01	)
-	,.wren					( ram_data_wr_01			)
-	,.q						( ram_rdata_01				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_01 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_01 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_01 <= ram_data_wr_addr_r_01 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_01 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_01 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_01 <= ram_data_rd_addr_r_01 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_01 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_01)) & (ram_cnt == 6'd1))
-						ram_seq_num_r_01 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_01 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_01 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_01 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd1))
-						ram_seq_lock_01 <= 1'b1;
-
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_01 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_01 + 16'd1450) <= tcp_ack_num_i) & !old_data_en_o)
-						ram_lock_r_01 <= 0;						
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_01 + 16'd1450) <= tcp_ack_num_i) & old_data_en_o & (ram_cnt == 6'd1))
-						ram_lock_r_01 <= 0;
-	else if (start_reg & (ram_cnt == 6'd1))
-						ram_lock_r_01 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_01 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd1))
-						ram_data_chksum_01 <= udp_data_chksum;					
-
-						
-assign ram_data_rd_addr_01 = ram_data_rd_addr_r_01 + udp_data_in_rd;
-assign ram_data_wr_01 = udp_fifo_data_wr & (ram_cnt == 6'd1);
-
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_02;
-reg	[ 8:0]	ram_data_rd_addr_r_02;
-reg	[31:0]	ram_seq_num_r_02;
-reg	[15:0]	ram_data_chksum_02;
-reg				ram_lock_r_02;
-reg				ram_seq_lock_02;
-wire	[ 8:0]	ram_data_rd_addr_02;
-wire				ram_data_wr_02;
-wire	[31:0]	ram_rdata_02;
-
-ram2048	ram_data_02 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_02	)
-	,.wraddress				( ram_data_wr_addr_r_02	)
-	,.wren					( ram_data_wr_02			)
-	,.q						( ram_rdata_02				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_02 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_02 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_02 <= ram_data_wr_addr_r_02 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_02 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_02 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_02 <= ram_data_rd_addr_r_02 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_02 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_02)) & (ram_cnt == 6'd2))
-						ram_seq_num_r_02 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_02 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_02 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_02 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd2))
-						ram_seq_lock_02 <= 1'b1;
-						
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_02 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_02 + 16'd1450) <= tcp_ack_num_i) & !old_data_en_o)
-						ram_lock_r_02 <= 0;						
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_02 + 16'd1450) <= tcp_ack_num_i) & old_data_en_o & (ram_cnt == 6'd2))
-						ram_lock_r_02 <= 0;
-	else if (start_reg & (ram_cnt == 6'd2))
-						ram_lock_r_02 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_02 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd2))
-						ram_data_chksum_02 <= udp_data_chksum;
-
-						
-assign ram_data_rd_addr_02 = ram_data_rd_addr_r_02 + udp_data_in_rd;
-assign ram_data_wr_02 = udp_fifo_data_wr & (ram_cnt == 6'd2);
-
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_03;
-reg	[ 8:0]	ram_data_rd_addr_r_03;
-reg	[31:0]	ram_seq_num_r_03;
-reg	[15:0]	ram_data_chksum_03;
-reg				ram_lock_r_03;
-reg				ram_seq_lock_03;
-wire	[ 8:0]	ram_data_rd_addr_03;
-wire				ram_data_wr_03;
-wire	[31:0]	ram_rdata_03;
-
-ram2048	ram_data_03 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_03	)
-	,.wraddress				( ram_data_wr_addr_r_03	)
-	,.wren					( ram_data_wr_03			)
-	,.q						( ram_rdata_03				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_03 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_03 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_03 <= ram_data_wr_addr_r_03 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_03 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_03 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_03 <= ram_data_rd_addr_r_03 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_03 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_03)) & (ram_cnt == 6'd3))
-						ram_seq_num_r_03 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_03 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_03 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_03 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd3))
-						ram_seq_lock_03 <= 1'b1;
-						
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_03 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_03 + 16'd1450) <= tcp_ack_num_i) & !old_data_en_o)
-						ram_lock_r_03 <= 0;						
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_03 + 16'd1450) <= tcp_ack_num_i) & old_data_en_o & (ram_cnt == 6'd3))
-						ram_lock_r_03 <= 0;
-	else if (start_reg & (ram_cnt == 6'd3))
-						ram_lock_r_03 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_03 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd3))
-						ram_data_chksum_03 <= udp_data_chksum;
-
-						
-assign ram_data_rd_addr_03 = ram_data_rd_addr_r_03 + udp_data_in_rd;
-assign ram_data_wr_03 = udp_fifo_data_wr & (ram_cnt == 6'd3);
-
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_04;
-reg	[ 8:0]	ram_data_rd_addr_r_04;
-reg	[31:0]	ram_seq_num_r_04;
-reg	[15:0]	ram_data_chksum_04;
-reg				ram_lock_r_04;
-reg				ram_seq_lock_04;
-wire	[ 8:0]	ram_data_rd_addr_04;
-wire				ram_data_wr_04;
-wire	[31:0]	ram_rdata_04;
-
-ram2048	ram_data_04 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_04	)
-	,.wraddress				( ram_data_wr_addr_r_04	)
-	,.wren					( ram_data_wr_04			)
-	,.q						( ram_rdata_04				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_04 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_04 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_04 <= ram_data_wr_addr_r_04 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_04 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_04 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_04 <= ram_data_rd_addr_r_04 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_04 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_04)) & (ram_cnt == 6'd4))
-						ram_seq_num_r_04 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_04 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_04 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_04 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd4))
-						ram_seq_lock_04 <= 1'b1;
-						
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_04 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_04 + 16'd1450) <= tcp_ack_num_i)  & !old_data_en_o)
-						ram_lock_r_04 <= 0;						
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_04 + 16'd1450) <= tcp_ack_num_i)  & old_data_en_o & (ram_cnt == 6'd4))
-						ram_lock_r_04 <= 0;
-	else if (start_reg & (ram_cnt == 6'd4))
-						ram_lock_r_04 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_04 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd4))
-						ram_data_chksum_04 <= udp_data_chksum;
-
-						
-assign ram_data_rd_addr_04 = ram_data_rd_addr_r_04 + udp_data_in_rd;
-assign ram_data_wr_04 = udp_fifo_data_wr & (ram_cnt == 6'd4);
-
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_05;
-reg	[ 8:0]	ram_data_rd_addr_r_05;
-reg	[31:0]	ram_seq_num_r_05;
-reg	[15:0]	ram_data_chksum_05;
-reg				ram_lock_r_05;
-reg				ram_seq_lock_05;
-wire	[ 8:0]	ram_data_rd_addr_05;
-wire				ram_data_wr_05;
-wire	[31:0]	ram_rdata_05;
-
-ram2048	ram_data_05 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_05	)
-	,.wraddress				( ram_data_wr_addr_r_05	)
-	,.wren					( ram_data_wr_05			)
-	,.q						( ram_rdata_05				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_05 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_05 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_05 <= ram_data_wr_addr_r_05 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_05 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_05 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_05 <= ram_data_rd_addr_r_05 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_05 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_05)) & (ram_cnt == 6'd5))
-						ram_seq_num_r_05 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_05 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_05 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_05 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd5))
-						ram_seq_lock_05 <= 1'b1;
-						
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_05 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_05 + 16'd1450) <= tcp_ack_num_i) & !old_data_en_o)
-						ram_lock_r_05 <= 0;						
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_05 + 16'd1450) <= tcp_ack_num_i) & old_data_en_o & (ram_cnt == 6'd5))
-						ram_lock_r_05 <= 0;
-	else if (start_reg & (ram_cnt == 6'd5))
-						ram_lock_r_05 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_05 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd5))
-						ram_data_chksum_05 <= udp_data_chksum;
-
-						
-assign ram_data_rd_addr_05 = ram_data_rd_addr_r_05 + udp_data_in_rd;
-assign ram_data_wr_05 = udp_fifo_data_wr & (ram_cnt == 6'd5);
-
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_06;
-reg	[ 8:0]	ram_data_rd_addr_r_06;
-reg	[31:0]	ram_seq_num_r_06;
-reg	[15:0]	ram_data_chksum_06;
-reg				ram_lock_r_06;
-reg				ram_seq_lock_06;
-wire	[ 8:0]	ram_data_rd_addr_06;
-wire				ram_data_wr_06;
-wire	[31:0]	ram_rdata_06;
-
-ram2048	ram_data_06 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_06	)
-	,.wraddress				( ram_data_wr_addr_r_06	)
-	,.wren					( ram_data_wr_06			)
-	,.q						( ram_rdata_06				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_06 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_06 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_06 <= ram_data_wr_addr_r_06 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_06 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_06 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_06 <= ram_data_rd_addr_r_06 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_06 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_06)) & (ram_cnt == 6'd6))
-						ram_seq_num_r_06 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_06 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_06 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_06 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd6))
-						ram_seq_lock_06 <= 1'b1;
-						
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_06 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_06 + 16'd1450) <= tcp_ack_num_i) & !old_data_en_o)
-						ram_lock_r_06 <= 0;						
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_06 + 16'd1450) <= tcp_ack_num_i) & old_data_en_o & (ram_cnt == 6'd6))
-						ram_lock_r_06 <= 0;
-	else if (start_reg & (ram_cnt == 6'd6))
-						ram_lock_r_06 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_06 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd6))
-						ram_data_chksum_06 <= udp_data_chksum;					
-
-						
-assign ram_data_rd_addr_06 = ram_data_rd_addr_r_06 + udp_data_in_rd;
-assign ram_data_wr_06 = udp_fifo_data_wr & (ram_cnt == 6'd6);
-
-//---------------------------------------------------------------------
-reg	[ 8:0]	ram_data_wr_addr_r_07;
-reg	[ 8:0]	ram_data_rd_addr_r_07;
-reg	[31:0]	ram_seq_num_r_07;
-reg	[15:0]	ram_data_chksum_07;
-reg				ram_lock_r_07;
-reg				ram_seq_lock_07;
-wire	[ 8:0]	ram_data_rd_addr_07;
-wire				ram_data_wr_07;
-wire	[31:0]	ram_rdata_07;
-
-ram2048	ram_data_07 
-(
-	.clock 					( pll_62_5m_clk			)
-	,.data 					( udp_data_gen				)
-	,.rdaddress				( ram_data_rd_addr_07	)
-	,.wraddress				( ram_data_wr_addr_r_07	)
-	,.wren					( ram_data_wr_07			)
-	,.q						( ram_rdata_07				)
-);
-
-//RAM WRITE ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_wr_addr_r_07 <= 0;
-	else if (udp_eop)
-					ram_data_wr_addr_r_07 <= 0;
-	else if (udp_fifo_data_wr)
-					ram_data_wr_addr_r_07 <= ram_data_wr_addr_r_07 + 1'b1;
-
-//RAM READ ADDRESS
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-					ram_data_rd_addr_r_07 <= 0;
-	else if (udp_eop)
-					ram_data_rd_addr_r_07 <= 0;
-	else if (udp_data_in_rd)
-					ram_data_rd_addr_r_07 <= ram_data_rd_addr_r_07 + 1'b1;
-
-//SEQUENCE NUMBER FOR RAM
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_seq_num_r_07 <= 0;
-	else if ((start_reg | (old_data_start_o & !ram_seq_lock_07)) & (ram_cnt == 6'd7))
-						ram_seq_num_r_07 <= tcp_seq_num_o;
-						
-//SEQUENCE NUMBER LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)
-						ram_seq_lock_07 <= 0;
-	else if ((nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_07 + 16'd1450) <= tcp_ack_num_i)) | tcp_ctrl_state_idle)
-						ram_seq_lock_07 <= 1'b0;
-	else if (start_reg & (ram_cnt == 6'd7))
-						ram_seq_lock_07 <= 1'b1;
-						
-//RAM LOCK
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)	
-						ram_lock_r_07 <= 0;
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_07 + 16'd1450) <= tcp_ack_num_i) & !old_data_en_o)
-						ram_lock_r_07 <= 0;						
-	else if (nl_up_op_end & tcp_flags_i[4] & !tcp_flags_i[2] & ((ram_seq_num_r_07 + 16'd1450) <= tcp_ack_num_i) & old_data_en_o & (ram_cnt == 6'd7))
-						ram_lock_r_07 <= 0;
-	else if (start_reg & (ram_cnt == 6'd7))
-						ram_lock_r_07 <= 1;
-						
-always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)		ram_data_chksum_07 <= 0;
-	else if (udp_run & udp_fifo_data_wr & (ram_cnt == 6'd7))
-						ram_data_chksum_07 <= udp_data_chksum;
-
-						
-assign ram_data_rd_addr_07 = ram_data_rd_addr_r_07 + udp_data_in_rd;
-assign ram_data_wr_07 = udp_fifo_data_wr & (ram_cnt == 6'd7);
-
+//MEM/CONTROLLER MUXES
+assign tcp_data_chksum_mux =	tcp_ctrl_data_flg ?	wram_dat_chksum : 
+																	16'b0;
+assign tcp_data_len_mux		=	tcp_ctrl_data_flg ?	wram_wdat_len : 
+																	16'b0;																	
+assign tcp_seq_num_mux		=	tcp_ctrl_data_flg ?	wram_seq_num : 
+																	tcp_seq_num_o;
 
 //---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
 udp_full_transmitter udp_full_transmitter
 (
 	.clk						(	pll_62_5m_clk	)
 	,.rst_n					(	rst_n				)
 	
 	//control signals
-	,.start					(	tcp_start_o | udp_start	| old_data_start )
+	,.start					(	tcp_start		)
 	
 	//output data + controls
 	,.data_out				(	udp_data_o		)
@@ -1765,21 +1602,20 @@ udp_full_transmitter udp_full_transmitter
 	//UDP + TCP
 	,.udp_src_port			(	tcp_source_port_o	)
 	,.udp_dst_port			(	tcp_dest_port_o	)
-	,.udp_data_length		(	tcp_data_len_o		)
-	,.tcp_seq_num			(	tcp_seq_num_o	)
-	,.tcp_ack_num			(	tcp_ack_num_o	)
-	,.tcp_head_len			(	tcp_head_len_o	)
-	,.tcp_flags				(	tcp_flags_o		)
-	,.tcp_window			(	tcp_window		)
-	,.tcp_urgent_ptr		(	tcp_urgent_ptr	)
-	,.tcp_options			(	tcp_options		)
-	,.udp_data_chksum		(	udp_data_chksum_r)
+	,.udp_data_length		(	tcp_data_len_mux	)
+	,.tcp_seq_num			(	tcp_seq_num_mux	)		
+	,.tcp_ack_num			(	tcp_ack_num_o		)
+	,.tcp_head_len			(	tcp_head_len_o		)
+	,.tcp_flags				(	tcp_flags_o			)
+	,.tcp_window			(	tcp_window			)
+	,.tcp_urgent_ptr		(	tcp_urgent_ptr		)
+	,.tcp_options			(	tcp_options			)
+	,.udp_data_chksum		(	tcp_data_chksum_mux + crc_err_gen)
 	
 	,.work_o					(	transmitter_work	)
 );
 
-wire tcp_controller_busy = udp_run | start_reg | transmitter_work;
-
+wire tcp_controller_busy = tcp_run | tcp_start | transmitter_work;
 
 //TIMER
 reg	[31:0]	timer_reg;
@@ -1861,8 +1697,6 @@ always @(posedge mac_tx_clk_45_shift or negedge rst_n)
 always @(posedge mac_tx_clk_45_shift or negedge rst_n)
 	if (!rst_n)		mac_txen_rr <= 1'b0;
 	else 				mac_txen_rr <= mac_txen_r;
-
-
 
 
 	

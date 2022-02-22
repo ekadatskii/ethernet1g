@@ -499,12 +499,12 @@ assign udp_full_crc_sum_w =	//preudo header crc sum
 										//tcp header crc sum
 										udp_src_port_r[15:0] + udp_dst_port_r[15:0] + tcp_seq_num_r[31:16] + tcp_seq_num_r[15:0] + tcp_ack_num_r[31:16] + tcp_ack_num_r[15:0] + {tcp_head_len_r, 6'b0, tcp_flags_r} +
 										tcp_window_r + tcp_urgent_ptr_r +
-										((tcp_head_len >= 4'd8) ? tcp_options_r[95:80] : 16'h0) +
-										((tcp_head_len >= 4'd8) ? tcp_options_r[79:64] : 16'h0) +
+										((tcp_head_len >= 4'd6) ? tcp_options_r[95:80] : 16'h0) +
+										((tcp_head_len >= 4'd6) ? tcp_options_r[79:64] : 16'h0) +
 										((tcp_head_len >= 4'd7) ? tcp_options_r[63:48] : 16'h0) +
 										((tcp_head_len >= 4'd7) ? tcp_options_r[47:32] : 16'h0) +
-										((tcp_head_len >= 4'd6) ? tcp_options_r[31:16] : 16'h0) +
-										((tcp_head_len >= 4'd6) ? tcp_options_r[15: 0] : 16'h0) +
+										((tcp_head_len >= 4'd8) ? tcp_options_r[31:16] : 16'h0) +
+										((tcp_head_len >= 4'd8) ? tcp_options_r[15: 0] : 16'h0) +
 										//data crc sum
 										udp_data_chksum[15:0];
 										
