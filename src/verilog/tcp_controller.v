@@ -466,6 +466,14 @@ assign time_out_pas_w = time_out_r == 0;
 //---------------------------------------------------------------------//
 //MEMORY DATA READY
 assign mem_dat_rdy = {
+									(mem_wr_lock_flg_i[15] & !mem_rd_lock_flg_i[15]),
+									(mem_wr_lock_flg_i[14] & !mem_rd_lock_flg_i[14]),
+									(mem_wr_lock_flg_i[13] & !mem_rd_lock_flg_i[13]),
+									(mem_wr_lock_flg_i[12] & !mem_rd_lock_flg_i[12]),
+									(mem_wr_lock_flg_i[11] & !mem_rd_lock_flg_i[11]),
+									(mem_wr_lock_flg_i[10] & !mem_rd_lock_flg_i[10]),
+									(mem_wr_lock_flg_i[9] & !mem_rd_lock_flg_i[9]),
+									(mem_wr_lock_flg_i[8] & !mem_rd_lock_flg_i[8]),
 									(mem_wr_lock_flg_i[7] & !mem_rd_lock_flg_i[7]),
 									(mem_wr_lock_flg_i[6] & !mem_rd_lock_flg_i[6]),
 									(mem_wr_lock_flg_i[5] & !mem_rd_lock_flg_i[5]),
@@ -477,7 +485,15 @@ assign mem_dat_rdy = {
 								};
 								
 //SELECTED DATA OLD								
-assign mem_old_dat_flg =	mem_data_sel_o[7] ? mem_rd_seq_lock_flg_i[7] :
+assign mem_old_dat_flg =	mem_data_sel_o[15] ? mem_rd_seq_lock_flg_i[15] :
+									mem_data_sel_o[14] ? mem_rd_seq_lock_flg_i[14] :
+									mem_data_sel_o[13] ? mem_rd_seq_lock_flg_i[13] :
+									mem_data_sel_o[12] ? mem_rd_seq_lock_flg_i[12] :
+									mem_data_sel_o[11] ? mem_rd_seq_lock_flg_i[11] :
+									mem_data_sel_o[10] ? mem_rd_seq_lock_flg_i[10] :
+									mem_data_sel_o[9] ? mem_rd_seq_lock_flg_i[9] :
+									mem_data_sel_o[8] ? mem_rd_seq_lock_flg_i[8] :
+									mem_data_sel_o[7] ? mem_rd_seq_lock_flg_i[7] :
 									mem_data_sel_o[6] ? mem_rd_seq_lock_flg_i[6] :
 									mem_data_sel_o[5] ? mem_rd_seq_lock_flg_i[5] :
 									mem_data_sel_o[4] ? mem_rd_seq_lock_flg_i[4] :
@@ -488,7 +504,15 @@ assign mem_old_dat_flg =	mem_data_sel_o[7] ? mem_rd_seq_lock_flg_i[7] :
 									1'b0;
 									
 //MEMORY OLD ANY FLAG			//VERIFY
-assign mem_old_dat_any_flg =	(!mem_rd_lock_flg_i[7] & mem_rd_seq_lock_flg_i[7]) |
+assign mem_old_dat_any_flg =	(!mem_rd_lock_flg_i[15] & mem_rd_seq_lock_flg_i[15]) |
+										(!mem_rd_lock_flg_i[14] & mem_rd_seq_lock_flg_i[14]) |
+										(!mem_rd_lock_flg_i[13] & mem_rd_seq_lock_flg_i[13]) |
+										(!mem_rd_lock_flg_i[12] & mem_rd_seq_lock_flg_i[12]) |
+										(!mem_rd_lock_flg_i[11] & mem_rd_seq_lock_flg_i[11]) |
+										(!mem_rd_lock_flg_i[10] & mem_rd_seq_lock_flg_i[10]) |
+										(!mem_rd_lock_flg_i[9] & mem_rd_seq_lock_flg_i[9]) |
+										(!mem_rd_lock_flg_i[8] & mem_rd_seq_lock_flg_i[8]) |
+										(!mem_rd_lock_flg_i[7] & mem_rd_seq_lock_flg_i[7]) |
 										(!mem_rd_lock_flg_i[6] & mem_rd_seq_lock_flg_i[6]) |
 										(!mem_rd_lock_flg_i[5] & mem_rd_seq_lock_flg_i[5]) |
 										(!mem_rd_lock_flg_i[4] & mem_rd_seq_lock_flg_i[4]) |
@@ -498,7 +522,15 @@ assign mem_old_dat_any_flg =	(!mem_rd_lock_flg_i[7] & mem_rd_seq_lock_flg_i[7]) 
 										(!mem_rd_lock_flg_i[0] & mem_rd_seq_lock_flg_i[0]);
 										
 //NOT ACKNOWLEDGED MEMORY SELECT STOP(ACK)
-assign mem_notack_dat_stop =	mem_notack_dat_sel[7] ? med_rd_ack_i[7]:
+assign mem_notack_dat_stop =	mem_notack_dat_sel[15] ? med_rd_ack_i[15]:
+										mem_notack_dat_sel[14] ? med_rd_ack_i[14]:
+										mem_notack_dat_sel[13] ? med_rd_ack_i[13]:
+										mem_notack_dat_sel[12] ? med_rd_ack_i[12]:
+										mem_notack_dat_sel[11] ? med_rd_ack_i[11]:
+										mem_notack_dat_sel[10] ? med_rd_ack_i[10]:
+										mem_notack_dat_sel[9] ? med_rd_ack_i[9]:
+										mem_notack_dat_sel[8] ? med_rd_ack_i[8]:
+										mem_notack_dat_sel[7] ? med_rd_ack_i[7]:
 										mem_notack_dat_sel[6] ? med_rd_ack_i[6]:
 										mem_notack_dat_sel[5] ? med_rd_ack_i[5]:
 										mem_notack_dat_sel[4] ? med_rd_ack_i[4]:
@@ -510,6 +542,14 @@ assign mem_notack_dat_stop =	mem_notack_dat_sel[7] ? med_rd_ack_i[7]:
 										
 //NOT ACKNOWLEDGED MEMORY DATA READY								
 assign mem_notack_dat_rdy	= {
+										(mem_wr_lock_flg_i[15] & mem_rd_lock_flg_i[15]),
+										(mem_wr_lock_flg_i[14] & mem_rd_lock_flg_i[14]),
+										(mem_wr_lock_flg_i[13] & mem_rd_lock_flg_i[13]),
+										(mem_wr_lock_flg_i[12] & mem_rd_lock_flg_i[12]),
+										(mem_wr_lock_flg_i[11] & mem_rd_lock_flg_i[11]),
+										(mem_wr_lock_flg_i[10] & mem_rd_lock_flg_i[10]),
+										(mem_wr_lock_flg_i[9] & mem_rd_lock_flg_i[9]),
+										(mem_wr_lock_flg_i[8] & mem_rd_lock_flg_i[8]),
 										(mem_wr_lock_flg_i[7] & mem_rd_lock_flg_i[7]),
 										(mem_wr_lock_flg_i[6] & mem_rd_lock_flg_i[6]),
 										(mem_wr_lock_flg_i[5] & mem_rd_lock_flg_i[5]),
