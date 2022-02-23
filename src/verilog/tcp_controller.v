@@ -126,6 +126,7 @@ wire				time_out_pas;
 
 wire	[MEMORY_NUM-1:	0]	mem_dat_rdy;
 wire							mem_old_dat_flg;
+wire							mem_old_dat_any_flg;
 wire							mem_sel_rdy;
 
 wire	[MEMORY_NUM-1 :0] mem_notack_dat_rdy;
@@ -344,14 +345,14 @@ always @(posedge clk or negedge rst_n)
 																tcp_seq_num_r <= tcp_seq_num_r + 1'b1;
 																
 	else if (tcp_wdat_stop_i & wdat_lock & (state == STATE_ESTABLISHED) & !mem_old_dat_flg)
-																tcp_seq_num_r <= tcp_seq_num_r + TCP_DATA_LENGTH_IN_BYTE;
+																tcp_seq_num_r <= tcp_seq_num_r + ram_dat_len_i;
 																
 /*																
 	else if (old_data_en & !rst_rcv & ack_rcv & (tcp_seq_num_r + 16'd1450 <= tcp_ack_num_i) & (state == STATE_ESTABLISHED))
 																tcp_seq_num_r <= tcp_seq_num_r + TCP_DATA_LENGTH_IN_BYTE;*/													
 																
 	else if (state == STATE_CLOSE_WAIT)				
-																tcp_seq_num_r <= tcp_seq_num_r + 1'b1;																
+																tcp_seq_num_r <= tcp_seq_num_r;																
 
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & ack_rcv & (state == STATE_CLOSED))
 																tcp_seq_num_r <= tcp_ack_num_i;
@@ -485,7 +486,17 @@ assign mem_old_dat_flg =	mem_data_sel_o[7] ? mem_rd_seq_lock_flg_i[7] :
 									mem_data_sel_o[1] ? mem_rd_seq_lock_flg_i[1] :
 									mem_data_sel_o[0] ? mem_rd_seq_lock_flg_i[0] : 								
 									1'b0;
-
+									
+//MEMORY OLD ANY FLAG			//VERIFY
+assign mem_old_dat_any_flg =	(!mem_rd_lock_flg_i[7] & mem_rd_seq_lock_flg_i[7]) |
+										(!mem_rd_lock_flg_i[6] & mem_rd_seq_lock_flg_i[6]) |
+										(!mem_rd_lock_flg_i[5] & mem_rd_seq_lock_flg_i[5]) |
+										(!mem_rd_lock_flg_i[4] & mem_rd_seq_lock_flg_i[4]) |
+										(!mem_rd_lock_flg_i[3] & mem_rd_seq_lock_flg_i[3]) |
+										(!mem_rd_lock_flg_i[2] & mem_rd_seq_lock_flg_i[2]) |
+										(!mem_rd_lock_flg_i[1] & mem_rd_seq_lock_flg_i[1]) |
+										(!mem_rd_lock_flg_i[0] & mem_rd_seq_lock_flg_i[0]);
+										
 //NOT ACKNOWLEDGED MEMORY SELECT STOP(ACK)
 assign mem_notack_dat_stop =	mem_notack_dat_sel[7] ? med_rd_ack_i[7]:
 										mem_notack_dat_sel[6] ? med_rd_ack_i[6]:
@@ -523,6 +534,7 @@ tcp_mem_arbiter #(MEMORY_NUM) tcp_mem_arbiter
 	,.sel_block_i			(	sel_block				)
 	,.irq_i					(	mem_dat_rdy				)
 	,.irq_repeat_i			(	mem_old_dat_flg		)
+	,.irq_any_repeat_i	(	mem_old_dat_any_flg	)
 	,.sel_o					(	mem_data_sel_o			)
 	,.sel_rdy_o				(	mem_sel_rdy				)									
 	
@@ -530,7 +542,7 @@ tcp_mem_arbiter #(MEMORY_NUM) tcp_mem_arbiter
 	,.port_mask_chng_i	(	port_mask_change		)	//(	tcp_ctrl_state_idle	)
 		
 	//Connection with encoder
-	,.stop_i					(	tcp_wdat_stop_i		)	//( tcp_run & udp_eop & tcp_ctrl_data_flg )
+	,.stop_i					(	tcp_wdat_stop_i & wdat_lock		)	//( tcp_run & udp_eop & tcp_ctrl_data_flg )
 //	,.stop_i					(	wdat_lock & tcp_wdat_stop_i	)	//( tcp_run & udp_eop & tcp_ctrl_data_flg )
 );	
 

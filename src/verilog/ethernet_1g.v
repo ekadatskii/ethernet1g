@@ -877,7 +877,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 assign timer_pas2 = timer_reg_r == 0;
 
 
-localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
+localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1448;
 
 reg 				gen_start;
 reg 				gen_run;	
@@ -922,7 +922,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 					gen_start <= 1'b0;
 	else if (gen_start)
 					gen_start <= 1'b0;
-	else if (gen_mem_rdy & !gen_run)
+	else if (gen_mem_rdy & !gen_run) //& (gen_packet_num != 9))
 					gen_start <= 1'b1;
 
 //GEN DATA STOP
@@ -983,10 +983,10 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 					
 	else if ((gen_content_chkr == 4'd2) & gen_data_wr & (gen_data_chkr == 16'd1440))
 				begin
-					gen_data[31:24] <= gen_data[31:24] + 4'd4;
-					gen_data[23:16] <= gen_data[23:16] + 4'd4;//usb_crc8_reg;//8'h00;//8'hDD;
-					gen_data[15: 8] <= 8'h00;
-					gen_data[ 7: 0] <= {3'b0, gen_mem_chkr};//8'h00;
+					gen_data[31:24] <= {4'b0, gen_mem_chkr[3:0]};
+					gen_data[23:16] <= gen_packet_num[23:16];
+					gen_data[15: 8] <= gen_packet_num[15:8];
+					gen_data[ 7: 0] <= gen_packet_num[7:0];
 				end	
 	
 	else if ((gen_content_chkr == 4'd2) & gen_data_wr)	
@@ -1009,9 +1009,9 @@ wire				crc_err_gen_chkr_pas;
 
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 												crc_err_num <= CRC_ERR_NUM;
-	else if (crc_err_gen_chkr_pas & wdat_start_o & (crc_err_num > 32'hFFFF_D000))
+	else if (crc_err_gen_chkr_pas & wdat_start_o & (crc_err_num > 32'hFFF0_0000))
 																	crc_err_num <= crc_err_num;
-	else if (crc_err_gen_chkr_pas & wdat_start_o)	crc_err_num <= crc_err_num + 1000;
+	else if (crc_err_gen_chkr_pas & wdat_start_o)	crc_err_num <= crc_err_num + 10000;
 	
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)													crc_err_gen_chkr <= CRC_ERR_NUM;
@@ -1054,9 +1054,9 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //									MEMORY 00 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_00			= wram_wr_cnt == 6'd0;
-wire				wmem_rd_sel_00			= wram_wdat_sel[0];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_00		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_00				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_00			= wram_wdat_sel[0];	
+wire				wmem_wr_stop_00		= gen_stop;				
+wire				wmem_wr_00				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_00;
 wire	[31:0]	wmem_rd_seq_num_00;
 wire	[15:0]	wmem_rd_chksum_00;
@@ -1105,9 +1105,9 @@ tcp_wr_memory #(1450)	tcp_wr_memory_00
 //									MEMORY 01 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_01			= wram_wr_cnt == 6'd1;
-wire				wmem_rd_sel_01			= wram_wdat_sel[1];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_01		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_01				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_01			= wram_wdat_sel[1];	
+wire				wmem_wr_stop_01		= gen_stop;				
+wire				wmem_wr_01				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_01;
 wire	[31:0]	wmem_rd_seq_num_01;
 wire	[15:0]	wmem_rd_chksum_01;
@@ -1157,9 +1157,9 @@ tcp_wr_memory #(1450)	tcp_wr_memory_01
 //									MEMORY 02 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_02			= wram_wr_cnt == 6'd2;
-wire				wmem_rd_sel_02			= wram_wdat_sel[2];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_02		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_02				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_02			= wram_wdat_sel[2];	
+wire				wmem_wr_stop_02		= gen_stop;				
+wire				wmem_wr_02				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_02;
 wire	[31:0]	wmem_rd_seq_num_02;
 wire	[15:0]	wmem_rd_chksum_02;
@@ -1209,9 +1209,9 @@ tcp_wr_memory #(1450)	tcp_wr_memory_02
 //									MEMORY 03 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_03			= wram_wr_cnt == 6'd3;
-wire				wmem_rd_sel_03			= wram_wdat_sel[3];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_03		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_03				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_03			= wram_wdat_sel[3];	
+wire				wmem_wr_stop_03		= gen_stop;				
+wire				wmem_wr_03				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_03;
 wire	[31:0]	wmem_rd_seq_num_03;
 wire	[15:0]	wmem_rd_chksum_03;
@@ -1261,9 +1261,9 @@ tcp_wr_memory #(1450)	tcp_wr_memory_03
 //									MEMORY 04 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_04			= wram_wr_cnt == 6'd4;
-wire				wmem_rd_sel_04			= wram_wdat_sel[4];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_04		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_04				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_04			= wram_wdat_sel[4];	
+wire				wmem_wr_stop_04		= gen_stop;				
+wire				wmem_wr_04				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_04;
 wire	[31:0]	wmem_rd_seq_num_04;
 wire	[15:0]	wmem_rd_chksum_04;
@@ -1311,9 +1311,9 @@ tcp_wr_memory #(1450)	tcp_wr_memory_04
 //									MEMORY 05 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_05			= wram_wr_cnt == 6'd5;
-wire				wmem_rd_sel_05			= wram_wdat_sel[5];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_05		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_05				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_05			= wram_wdat_sel[5];	
+wire				wmem_wr_stop_05		= gen_stop;				
+wire				wmem_wr_05				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_05;
 wire	[31:0]	wmem_rd_seq_num_05;
 wire	[15:0]	wmem_rd_chksum_05;
@@ -1361,9 +1361,9 @@ tcp_wr_memory #(1450)	tcp_wr_memory_05
 //									MEMORY 06 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_06			= wram_wr_cnt == 6'd6;
-wire				wmem_rd_sel_06			= wram_wdat_sel[6];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_06		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_06				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_06			= wram_wdat_sel[6];	
+wire				wmem_wr_stop_06		= gen_stop;				
+wire				wmem_wr_06				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_06;
 wire	[31:0]	wmem_rd_seq_num_06;
 wire	[15:0]	wmem_rd_chksum_06;
@@ -1411,9 +1411,9 @@ tcp_wr_memory #(1450)	tcp_wr_memory_06
 //									MEMORY 07 											  //
 //---------------------------------------------------------------------//
 wire				wmem_wr_sel_07			= wram_wr_cnt == 6'd7;
-wire				wmem_rd_sel_07			= wram_wdat_sel[7];	// TODO SAME NOW BUT NEED CHANGE TO REAL VALUE
-wire				wmem_wr_stop_07		= gen_stop;				// ((udp_fifo_data_wr_chkr + (udp_fifo_data_wr ? 4'd4 : 4'd0)) >= tcp_data_len_o) & !udp_start_lock & udp_run;	//TODO
-wire				wmem_wr_07				= gen_data_wr; 		// udp_fifo_data_wr
+wire				wmem_rd_sel_07			= wram_wdat_sel[7];	
+wire				wmem_wr_stop_07		= gen_stop;				
+wire				wmem_wr_07				= gen_data_wr; 		
 wire	[31:0]	wmem_rdat_07;
 wire	[31:0]	wmem_rd_seq_num_07;
 wire	[15:0]	wmem_rd_chksum_07;

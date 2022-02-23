@@ -14,6 +14,7 @@ module tcp_mem_arbiter #(parameter DEVICE_NUM)
 	input										sel_block_i,
 	input			[DEVICE_NUM-1:0]		irq_i,
 	input										irq_repeat_i,
+	input										irq_any_repeat_i,
 	output		[DEVICE_NUM-1:0]		sel_o,
 	output									sel_rdy_o,
 
@@ -141,6 +142,9 @@ always @(posedge clk or negedge rst_n)
 					port_mask <= port_num + 1'b1;	
 	else if (!irq_select & !send_done & !irq_repeat_i & !sel_block_i)		
 					port_mask <= width;
+	else if (!irq_select & !send_done & irq_any_repeat_i & !sel_block_i)
+					port_mask <= port_mask_i;
+
 
 		
 
