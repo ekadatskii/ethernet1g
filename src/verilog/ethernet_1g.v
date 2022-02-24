@@ -713,7 +713,7 @@ tcp_controller	#(WRAM_NUM) tcp_controller
 	//INPUT FLAGS/DATA PARAMETERS FROM MUX
 //	,.ram_dat_rdy_i			(		wram_rdat_rdy				)
 //	,.ram_oldseq_flg_i		(		wram_oldseq_flg			)
-	,.ram_dat_len_i			(		wram_wdat_len				)
+	,.ram_dat_len_i			(		wram_rdat_len				)
 	
 
 	//OUTPUT PARAMETERS TO SEND TCP PACKET
@@ -743,8 +743,6 @@ tcp_controller	#(WRAM_NUM) tcp_controller
 //--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
 //--------------------------------------------------------------------------------//
-parameter UDP_DATA_LENGTH_IN_BYTE = 16'd00;//16'd1450;
-
 wire	[47:0]		mac_dst_addr		= 48'h04_D4_C4_A5_A8_E0;//DENIS//48'h04_D4_C4_A5_93_CB;
 wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;
 wire	[15:0]		mac_type				= 16'h08_00;
@@ -791,7 +789,6 @@ wire	[15:0]		tcp_urgent_ptr		= 16'h0000;
 wire	[95:0]		tcp_options			= 96'h020405b4_01_030308_01_01_0402; //SACK PERMITTED
 wire	[ 3:0]		tcp_options_len	= 4'd2;
 wire	[31:0]		tcp_seq_num_next;
-wire	[15:0]		udp_data_length	= UDP_DATA_LENGTH_IN_BYTE;
 wire	[15:0]		tcp_data_len_o;
 wire					wdat_start_o;
 wire	[15:0]		tcp_window_i;
@@ -825,7 +822,7 @@ reg	[63:0]	udp_packet_num;
 reg	[ 3:0]	udp_content_chkr;
 
 
-wire	[31:0]	udp_fifo_rdata;
+reg	[31:0]	tcp_fifo_rdata;
 
 wire	[31:0]	udp_data_chksum_w;
 wire	[31:0]	udp_data_chksum_ww;
@@ -862,8 +859,6 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									DATA GENERATOR 									  //
 //---------------------------------------------------------------------//
-localparam		WRAM_NUM = 16;
-
 reg	[31:0]	timer_reg_r;
 wire				timer_pas2;
 
@@ -891,29 +886,20 @@ wire 				gen_stop;
 wire	[15:0]	gen_data_len;
 wire				gen_data_wr;
 wire				wr_mem_rdy_cur;
-wire				gen_mem_rdy;
+reg				gen_mem_rdy;
 
 assign gen_data_len = TCP_DATA_LENGTH_IN_BYTE;
-assign gen_mem_rdy = timer_pas2 ? (
-												(gen_mem_chkr == 5'd15) ? !wmem_wr_lock_flg[15] : 
-												(gen_mem_chkr == 5'd14) ? !wmem_wr_lock_flg[14] : 
-												(gen_mem_chkr == 5'd13) ? !wmem_wr_lock_flg[13] : 
-												(gen_mem_chkr == 5'd12) ? !wmem_wr_lock_flg[12] : 
-												(gen_mem_chkr == 5'd11) ? !wmem_wr_lock_flg[11] : 
-												(gen_mem_chkr == 5'd10) ? !wmem_wr_lock_flg[10] :
-												(gen_mem_chkr == 5'd9)  ? !wmem_wr_lock_flg[9] :
-												(gen_mem_chkr == 5'd8)  ? !wmem_wr_lock_flg[8] :
-												(gen_mem_chkr == 5'd7)  ? !wmem_wr_lock_flg[7] : 
-												(gen_mem_chkr == 5'd6)  ? !wmem_wr_lock_flg[6] : 
-												(gen_mem_chkr == 5'd5)  ? !wmem_wr_lock_flg[5] : 
-												(gen_mem_chkr == 5'd4)  ? !wmem_wr_lock_flg[4] : 
-												(gen_mem_chkr == 5'd3)  ? !wmem_wr_lock_flg[3] : 
-												(gen_mem_chkr == 5'd2)  ? !wmem_wr_lock_flg[2] :
-												(gen_mem_chkr == 5'd1)  ? !wmem_wr_lock_flg[1] :
-												(gen_mem_chkr == 5'd0)  ? !wmem_wr_lock_flg[0] :
-												1'b0) 
-												: 1'b0;
 
+always @*
+begin: mux_gen
+	integer h;
+	gen_mem_rdy = 1'b0;
+	for ( h = 0; h < WRAM_NUM; h = h + 1 )
+		if (gen_mem_chkr == h)
+		begin
+			gen_mem_rdy = timer_pas2 & !wmem_wr_lock_flg[h];
+		end
+end
 
 //GEN MEMORY SWITCHER
 always @(posedge pll_62_5m_clk or negedge rst_n)
@@ -1008,7 +994,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									CRC-ERR GENERATOR 								  //
 //---------------------------------------------------------------------//
-parameter		CRC_ERR_NUM = 200_000_000;
+parameter		CRC_ERR_NUM = 1_000_000;
 reg	[31:0]	crc_err_num;
 
 reg				crc_err_gen;
@@ -1019,7 +1005,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 												crc_err_num <= CRC_ERR_NUM;
 	else if (crc_err_gen_chkr_pas & wdat_start_o & (crc_err_num > 32'hFFF0_0000))
 																	crc_err_num <= crc_err_num;
-	else if (crc_err_gen_chkr_pas & wdat_start_o)	crc_err_num <= crc_err_num + 10000;
+//	else if (crc_err_gen_chkr_pas & wdat_start_o)	crc_err_num <= crc_err_num + 10000;
 	
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)													crc_err_gen_chkr <= CRC_ERR_NUM;
@@ -1059,813 +1045,54 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	else if (gen_data_wr)
 									gen_data_chksum_r <= gen_data_chksum;
 //---------------------------------------------------------------------//
-//									MEMORY 00 											  //
+//									MEMORY GEN 											  //
 //---------------------------------------------------------------------//
-wire				wmem_wr_sel_00			= wram_wr_cnt == 6'd0;
-wire				wmem_rd_sel_00			= wram_wdat_sel[0];	
-wire				wmem_wr_stop_00		= gen_stop;				
-wire				wmem_wr_00				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_00;
-wire	[31:0]	wmem_rd_seq_num_00;
-wire	[15:0]	wmem_rd_chksum_00;
-wire	[15:0]	wmem_rd_len_00;
+localparam		WRAM_NUM = 16;
 
+genvar mem_gen;
 
-tcp_wr_memory #(1450)	tcp_wr_memory_00
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
+generate 
+	for (mem_gen = 0; mem_gen < WRAM_NUM; mem_gen = mem_gen + 1) begin: memory_generation
+		tcp_wr_memory #(1450)	tcp_wr_memory_0
+			(
+				.clk									(		pll_62_5m_clk						)
+				,.rst_n								(		rst_n									)
 	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)		
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)
+				//INPUT DATA																	
+				,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o					)			
+				,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]					)
+				,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]					)
+				,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii						)		
+				,.tcp_seq_num_next_i				(		tcp_seq_num_next					)
 	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
+				,.controller_idle_st_i			(		tcp_ctrl_state_idle				)
+				,.seq_num_i							(		tcp_seq_num_o						)
 	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_00					)
-	,.wr_sel_i							(		wmem_wr_sel_00				)
-	,.wr_op_stop_i						(		wmem_wr_stop_00			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[0]		)
+				//INPUT DATA FROM DATA GENERATOR OR WORK DATA
+				,.wdat_i								(		gen_data								)
+				,.wdat_chksum_i					(		gen_data_chksum					)
+				,.wdat_len_i						(		gen_data_len						)		
+				,.wr_i								(		gen_data_wr							)
+				,.wr_sel_i							(		wmem_wr_sel[mem_gen]				)
+				,.wr_op_stop_i						(		gen_stop								)
+				,.wr_lock_flg_o					(		wmem_wr_lock_flg[mem_gen]		)
 	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_00				)
-	,.rdat_o								(		wmem_rdat_00				)
-	,.rd_chksum_o						(		wmem_rd_chksum_00			)
-	,.rd_len_o							(		wmem_rd_len_00				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[0]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_00		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[0]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[0]			)
-);
+				//OUTPUT DATA
+				,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg				)
+				,.rd_sel_i							(		wram_wdat_sel[mem_gen]								)
+				,.rdat_o								(		wmem_rdat[32 * mem_gen +: 32]						)
+				,.rd_chksum_o						(		wmem_rd_chksum[16 * mem_gen +: 16]				)
+				,.rd_len_o							(		wmem_rd_len[16 * mem_gen +: 16]					)
+				,.rd_lock_flg_o					(		wmem_rd_lock_flg[mem_gen]							)
+				,.rd_seq_num_o						(		wmem_rd_seq_num[32 * mem_gen +: 32]				)
+				,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[mem_gen]						)
+				,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg						)
+				,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg			)
+				,.rd_data_ack_o					(		wmem_rdat_ack[mem_gen]								)
+			);
+	end
 
-//---------------------------------------------------------------------//
-//									MEMORY 01 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_01			= wram_wr_cnt == 6'd1;
-wire				wmem_rd_sel_01			= wram_wdat_sel[1];	
-wire				wmem_wr_stop_01		= gen_stop;				
-wire				wmem_wr_01				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_01;
-wire	[31:0]	wmem_rd_seq_num_01;
-wire	[15:0]	wmem_rd_chksum_01;
-wire	[15:0]	wmem_rd_len_01;
-
-
-
-tcp_wr_memory #(1450)	tcp_wr_memory_01
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)		
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)
-	,.wr_i								(		wmem_wr_01					)
-	,.wr_sel_i							(		wmem_wr_sel_01				)
-	,.wr_op_stop_i						(		wmem_wr_stop_01			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[1]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_01				)
-	,.rdat_o								(		wmem_rdat_01				)
-	,.rd_chksum_o						(		wmem_rd_chksum_01			)
-	,.rd_len_o							(		wmem_rd_len_01				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[1]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_01		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[1]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop	& tcp_ctrl_data_flg		)
-	,.rd_data_ack_o					(		wmem_rdat_ack[1]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 02 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_02			= wram_wr_cnt == 6'd2;
-wire				wmem_rd_sel_02			= wram_wdat_sel[2];	
-wire				wmem_wr_stop_02		= gen_stop;				
-wire				wmem_wr_02				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_02;
-wire	[31:0]	wmem_rd_seq_num_02;
-wire	[15:0]	wmem_rd_chksum_02;
-wire	[15:0]	wmem_rd_len_02;
-
-
-
-tcp_wr_memory #(1450)	tcp_wr_memory_02
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)
-	,.wr_i								(		wmem_wr_02					)
-	,.wr_sel_i							(		wmem_wr_sel_02				)
-	,.wr_op_stop_i						(		wmem_wr_stop_02			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[2]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_02				)
-	,.rdat_o								(		wmem_rdat_02				)
-	,.rd_chksum_o						(		wmem_rd_chksum_02			)
-	,.rd_len_o							(		wmem_rd_len_02				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[2]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_02		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[2]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop	& tcp_ctrl_data_flg		)
-	,.rd_data_ack_o					(		wmem_rdat_ack[2]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 03 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_03			= wram_wr_cnt == 6'd3;
-wire				wmem_rd_sel_03			= wram_wdat_sel[3];	
-wire				wmem_wr_stop_03		= gen_stop;				
-wire				wmem_wr_03				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_03;
-wire	[31:0]	wmem_rd_seq_num_03;
-wire	[15:0]	wmem_rd_chksum_03;
-wire	[15:0]	wmem_rd_len_03;
-
-
-
-tcp_wr_memory #(1450)	tcp_wr_memory_03
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)
-	,.wr_i								(		wmem_wr_03					)
-	,.wr_sel_i							(		wmem_wr_sel_03				)
-	,.wr_op_stop_i						(		wmem_wr_stop_03			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[3]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_03				)
-	,.rdat_o								(		wmem_rdat_03				)
-	,.rd_chksum_o						(		wmem_rd_chksum_03			)
-	,.rd_len_o							(		wmem_rd_len_03				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[3]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_03		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[3]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop	& tcp_ctrl_data_flg		)
-	,.rd_data_ack_o					(		wmem_rdat_ack[3]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 04 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_04			= wram_wr_cnt == 6'd4;
-wire				wmem_rd_sel_04			= wram_wdat_sel[4];	
-wire				wmem_wr_stop_04		= gen_stop;				
-wire				wmem_wr_04				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_04;
-wire	[31:0]	wmem_rd_seq_num_04;
-wire	[15:0]	wmem_rd_chksum_04;
-wire	[15:0]	wmem_rd_len_04;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_04
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_04					)
-	,.wr_sel_i							(		wmem_wr_sel_04				)
-	,.wr_op_stop_i						(		wmem_wr_stop_04			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[4]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_04				)
-	,.rdat_o								(		wmem_rdat_04				)
-	,.rd_chksum_o						(		wmem_rd_chksum_04			)
-	,.rd_len_o							(		wmem_rd_len_04				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[4]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_04		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[4]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[4]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 05 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_05			= wram_wr_cnt == 6'd5;
-wire				wmem_rd_sel_05			= wram_wdat_sel[5];	
-wire				wmem_wr_stop_05		= gen_stop;				
-wire				wmem_wr_05				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_05;
-wire	[31:0]	wmem_rd_seq_num_05;
-wire	[15:0]	wmem_rd_chksum_05;
-wire	[15:0]	wmem_rd_len_05;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_05
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_05					)
-	,.wr_sel_i							(		wmem_wr_sel_05				)
-	,.wr_op_stop_i						(		wmem_wr_stop_05			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[5]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_05				)
-	,.rdat_o								(		wmem_rdat_05				)
-	,.rd_chksum_o						(		wmem_rd_chksum_05			)
-	,.rd_len_o							(		wmem_rd_len_05				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[5]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_05		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[5]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[5]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 06 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_06			= wram_wr_cnt == 6'd6;
-wire				wmem_rd_sel_06			= wram_wdat_sel[6];	
-wire				wmem_wr_stop_06		= gen_stop;				
-wire				wmem_wr_06				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_06;
-wire	[31:0]	wmem_rd_seq_num_06;
-wire	[15:0]	wmem_rd_chksum_06;
-wire	[15:0]	wmem_rd_len_06;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_06
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_06					)
-	,.wr_sel_i							(		wmem_wr_sel_06				)
-	,.wr_op_stop_i						(		wmem_wr_stop_06			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[6]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_06				)
-	,.rdat_o								(		wmem_rdat_06				)
-	,.rd_chksum_o						(		wmem_rd_chksum_06			)
-	,.rd_len_o							(		wmem_rd_len_06				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[6]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_06		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[6]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[6]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 07 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_07			= wram_wr_cnt == 6'd7;
-wire				wmem_rd_sel_07			= wram_wdat_sel[7];	
-wire				wmem_wr_stop_07		= gen_stop;				
-wire				wmem_wr_07				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_07;
-wire	[31:0]	wmem_rd_seq_num_07;
-wire	[15:0]	wmem_rd_chksum_07;
-wire	[15:0]	wmem_rd_len_07;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_07
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_07					)
-	,.wr_sel_i							(		wmem_wr_sel_07				)
-	,.wr_op_stop_i						(		wmem_wr_stop_07			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[7]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_07				)
-	,.rdat_o								(		wmem_rdat_07				)
-	,.rd_chksum_o						(		wmem_rd_chksum_07			)
-	,.rd_len_o							(		wmem_rd_len_07				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[7]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_07		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[7]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[7]			)
-);
-
-//-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//---------------------------------------------------------------------//
-//									MEMORY 08 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_08			= wram_wr_cnt == 6'd8;
-wire				wmem_rd_sel_08			= wram_wdat_sel[8];	
-wire				wmem_wr_stop_08		= gen_stop;				
-wire				wmem_wr_08				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_08;
-wire	[31:0]	wmem_rd_seq_num_08;
-wire	[15:0]	wmem_rd_chksum_08;
-wire	[15:0]	wmem_rd_len_08;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_08
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_08					)
-	,.wr_sel_i							(		wmem_wr_sel_08				)
-	,.wr_op_stop_i						(		wmem_wr_stop_08			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[8]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_08				)
-	,.rdat_o								(		wmem_rdat_08				)
-	,.rd_chksum_o						(		wmem_rd_chksum_08			)
-	,.rd_len_o							(		wmem_rd_len_08				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[8]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_08		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[8]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[8]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 09 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_09			= wram_wr_cnt == 6'd9;
-wire				wmem_rd_sel_09			= wram_wdat_sel[9];	
-wire				wmem_wr_stop_09		= gen_stop;				
-wire				wmem_wr_09				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_09;
-wire	[31:0]	wmem_rd_seq_num_09;
-wire	[15:0]	wmem_rd_chksum_09;
-wire	[15:0]	wmem_rd_len_09;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_09
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_09					)
-	,.wr_sel_i							(		wmem_wr_sel_09				)
-	,.wr_op_stop_i						(		wmem_wr_stop_09			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[9]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_09				)
-	,.rdat_o								(		wmem_rdat_09				)
-	,.rd_chksum_o						(		wmem_rd_chksum_09			)
-	,.rd_len_o							(		wmem_rd_len_09				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[9]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_09		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[9]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[9]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 10 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_10			= wram_wr_cnt == 6'd10;
-wire				wmem_rd_sel_10			= wram_wdat_sel[10];	
-wire				wmem_wr_stop_10		= gen_stop;				
-wire				wmem_wr_10				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_10;
-wire	[31:0]	wmem_rd_seq_num_10;
-wire	[15:0]	wmem_rd_chksum_10;
-wire	[15:0]	wmem_rd_len_10;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_10
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_10					)
-	,.wr_sel_i							(		wmem_wr_sel_10				)
-	,.wr_op_stop_i						(		wmem_wr_stop_10			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[10]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_10				)
-	,.rdat_o								(		wmem_rdat_10				)
-	,.rd_chksum_o						(		wmem_rd_chksum_10			)
-	,.rd_len_o							(		wmem_rd_len_10				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[10]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_10		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[10]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[10]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 11 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_11			= wram_wr_cnt == 6'd11;
-wire				wmem_rd_sel_11			= wram_wdat_sel[11];	
-wire				wmem_wr_stop_11		= gen_stop;				
-wire				wmem_wr_11				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_11;
-wire	[31:0]	wmem_rd_seq_num_11;
-wire	[15:0]	wmem_rd_chksum_11;
-wire	[15:0]	wmem_rd_len_11;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_11
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_11					)
-	,.wr_sel_i							(		wmem_wr_sel_11				)
-	,.wr_op_stop_i						(		wmem_wr_stop_11			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[11]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_11				)
-	,.rdat_o								(		wmem_rdat_11				)
-	,.rd_chksum_o						(		wmem_rd_chksum_11			)
-	,.rd_len_o							(		wmem_rd_len_11				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[11]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_11		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[11]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[11]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 12 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_12			= wram_wr_cnt == 6'd12;
-wire				wmem_rd_sel_12			= wram_wdat_sel[12];	
-wire				wmem_wr_stop_12		= gen_stop;				
-wire				wmem_wr_12				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_12;
-wire	[31:0]	wmem_rd_seq_num_12;
-wire	[15:0]	wmem_rd_chksum_12;
-wire	[15:0]	wmem_rd_len_12;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_12
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_12					)
-	,.wr_sel_i							(		wmem_wr_sel_12				)
-	,.wr_op_stop_i						(		wmem_wr_stop_12			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[12]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_12				)
-	,.rdat_o								(		wmem_rdat_12				)
-	,.rd_chksum_o						(		wmem_rd_chksum_12			)
-	,.rd_len_o							(		wmem_rd_len_12				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[12]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_12		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[12]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[12]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 13 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_13			= wram_wr_cnt == 6'd13;
-wire				wmem_rd_sel_13			= wram_wdat_sel[13];	
-wire				wmem_wr_stop_13		= gen_stop;				
-wire				wmem_wr_13				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_13;
-wire	[31:0]	wmem_rd_seq_num_13;
-wire	[15:0]	wmem_rd_chksum_13;
-wire	[15:0]	wmem_rd_len_13;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_13
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_13					)
-	,.wr_sel_i							(		wmem_wr_sel_13				)
-	,.wr_op_stop_i						(		wmem_wr_stop_13			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[13]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_13				)
-	,.rdat_o								(		wmem_rdat_13				)
-	,.rd_chksum_o						(		wmem_rd_chksum_13			)
-	,.rd_len_o							(		wmem_rd_len_13				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[13]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_13		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[13]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[13]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 14 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_14			= wram_wr_cnt == 6'd14;
-wire				wmem_rd_sel_14			= wram_wdat_sel[14];	
-wire				wmem_wr_stop_14		= gen_stop;				
-wire				wmem_wr_14				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_14;
-wire	[31:0]	wmem_rd_seq_num_14;
-wire	[15:0]	wmem_rd_chksum_14;
-wire	[15:0]	wmem_rd_len_14;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_14
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_14					)
-	,.wr_sel_i							(		wmem_wr_sel_14				)
-	,.wr_op_stop_i						(		wmem_wr_stop_14			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[14]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_14				)
-	,.rdat_o								(		wmem_rdat_14				)
-	,.rd_chksum_o						(		wmem_rd_chksum_14			)
-	,.rd_len_o							(		wmem_rd_len_14				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[14]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_14		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[14]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[14]			)
-);
-
-//---------------------------------------------------------------------//
-//									MEMORY 15 											  //
-//---------------------------------------------------------------------//
-wire				wmem_wr_sel_15			= wram_wr_cnt == 6'd15;
-wire				wmem_rd_sel_15			= wram_wdat_sel[15];	
-wire				wmem_wr_stop_15		= gen_stop;				
-wire				wmem_wr_15				= gen_data_wr; 		
-wire	[31:0]	wmem_rdat_15;
-wire	[31:0]	wmem_rd_seq_num_15;
-wire	[15:0]	wmem_rd_chksum_15;
-wire	[15:0]	wmem_rd_len_15;
-
-tcp_wr_memory #(1450)	tcp_wr_memory_15
-(
-	.clk									(		pll_62_5m_clk				)
-	,.rst_n								(		rst_n							)
-	
-	//INPUT DATA																	
-	,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o			)		
-	,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]			)
-	,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]			)
-	,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii				)
-	,.tcp_seq_num_next_i				(		tcp_seq_num_next			)	
-	
-	,.controller_idle_st_i			(		tcp_ctrl_state_idle		)
-	,.seq_num_i							(		tcp_seq_num_o				)
-	
-	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
-	,.wdat_i								(		gen_data						)
-	,.wdat_chksum_i					(		gen_data_chksum			)
-	,.wdat_len_i						(		gen_data_len				)		
-	,.wr_i								(		wmem_wr_15					)
-	,.wr_sel_i							(		wmem_wr_sel_15				)
-	,.wr_op_stop_i						(		wmem_wr_stop_15			)
-	,.wr_lock_flg_o					(		wmem_wr_lock_flg[15]		)
-	
-	//OUTPUT DATA
-	,.rd_i								(		udp_data_in_rd	& tcp_ctrl_data_flg			)
-	,.rd_sel_i							(		wmem_rd_sel_15				)
-	,.rdat_o								(		wmem_rdat_15				)
-	,.rd_chksum_o						(		wmem_rd_chksum_15			)
-	,.rd_len_o							(		wmem_rd_len_15				)
-	,.rd_lock_flg_o					(		wmem_rd_lock_flg[15]		)
-	,.rd_seq_num_o						(		wmem_rd_seq_num_15		)
-	,.rd_seq_lock_flg_o				(		wmem_rd_seq_lock_flg[15]	)
-	,.rd_op_start_i					(		tcp_start & tcp_ctrl_data_flg	)
-	,.rd_op_stop_i						(		tcp_run & udp_eop & tcp_ctrl_data_flg	)
-	,.rd_data_ack_o					(		wmem_rdat_ack[15]			)
-);
-
+endgenerate					
 
 //---------------------------------------------------------------------//
 //									WRITE ARBITER/MUX	 								  //
@@ -1883,21 +1110,21 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 wire	[WRAM_NUM-1:	0]	wram_wdat_rdy;
 wire	[WRAM_NUM-1:	0]	wram_wdat_sel;
-//wire	[WRAM_NUM-1:	0]	wram_wdat_oldseq_mux;
-//wire							wram_oldseq_flg;
 wire	[WRAM_NUM-1:	0]	wram_unconf_port_mask;
 wire	[WRAM_NUM-1:	0] wram_unconf_dat_sel;
-//wire							wram_unconf_dat_stop;
-wire	[15:0]				wram_wdat_len;
-wire	[31:0]				wram_seq_num;
-wire	[15:0]				wram_dat_chksum;
+reg	[15:0]				wram_rdat_len;
+reg	[31:0]				wram_seq_num;
+reg	[15:0]				wram_dat_chksum;
 wire							wram_rdat_rdy;
-//wire	[WRAM_NUM-1:	0]	wram_unconf_dat_rdy;
 wire	[WRAM_NUM-1:	0]	wmem_wr_lock_flg;
 wire	[WRAM_NUM-1:	0]	wmem_rd_lock_flg;
 wire	[WRAM_NUM-1:	0]	wmem_rd_seq_lock_flg;
 wire	[WRAM_NUM-1:	0]	wmem_rdat_ack;
-
+wire	[WRAM_NUM*32-1:0]	wmem_rdat;
+wire	[WRAM_NUM*16-1:0]	wmem_rd_chksum;
+wire	[WRAM_NUM*16-1:0]	wmem_rd_len;
+wire	[WRAM_NUM*32-1:0]	wmem_rd_seq_num;
+reg	[WRAM_NUM-1   :0]	wmem_wr_sel; 
 
 reg	[5:0]					ram_wr_cnt;
 wire	[5:0]					ram_prev_unconf;
@@ -1912,88 +1139,72 @@ wire	[31:0]				ram_seq_num;
 
 wire	[15:0]				tcp_data_chksum_mux;
 wire	[15:0]				tcp_data_len_mux;
-wire	[31:0]				tcp_seq_num_mux;					
+wire	[31:0]				tcp_seq_num_mux;			
 
-//MUX DATA FROM MEM
-assign udp_fifo_rdata = (wram_wdat_sel[15]) ? wmem_rdat_15:
-								(wram_wdat_sel[14]) ? wmem_rdat_14:
-								(wram_wdat_sel[13]) ? wmem_rdat_13:
-								(wram_wdat_sel[12]) ? wmem_rdat_12:
-								(wram_wdat_sel[11]) ? wmem_rdat_11:
-								(wram_wdat_sel[10]) ? wmem_rdat_10:
-								(wram_wdat_sel[9]) ? wmem_rdat_09:
-								(wram_wdat_sel[8]) ? wmem_rdat_08:
-								(wram_wdat_sel[7]) ? wmem_rdat_07:
-								(wram_wdat_sel[6]) ? wmem_rdat_06:
-								(wram_wdat_sel[5]) ? wmem_rdat_05:
-								(wram_wdat_sel[4]) ? wmem_rdat_04:
-								(wram_wdat_sel[3]) ? wmem_rdat_03:
-								(wram_wdat_sel[2]) ? wmem_rdat_02:
-								(wram_wdat_sel[1]) ? wmem_rdat_01:
-								(wram_wdat_sel[0]) ? wmem_rdat_00:
-								32'b0; 
+//WRAM WRITE SELECT
+always @*
+begin: wsel01
+	integer f;
+	wmem_wr_sel = {WRAM_NUM{1'b0}};
+	for ( f = 0; f < WRAM_NUM; f = f + 1 )
+		if (wram_wr_cnt == f)
+		begin
+			wmem_wr_sel[f] = 1'b1;
+		end
+end
 
-//MUX DATA CHECKSUM FROM MEM								
-assign wram_dat_chksum =(wram_wdat_sel[15]) ? wmem_rd_chksum_15:
-								(wram_wdat_sel[14]) ? wmem_rd_chksum_14:
-								(wram_wdat_sel[13]) ? wmem_rd_chksum_13:
-								(wram_wdat_sel[12]) ? wmem_rd_chksum_12:
-								(wram_wdat_sel[11]) ? wmem_rd_chksum_11:
-								(wram_wdat_sel[10]) ? wmem_rd_chksum_10:
-								(wram_wdat_sel[9]) ? wmem_rd_chksum_09:
-								(wram_wdat_sel[8]) ? wmem_rd_chksum_08:
-								(wram_wdat_sel[7]) ? wmem_rd_chksum_07:
-								(wram_wdat_sel[6]) ? wmem_rd_chksum_06:
-								(wram_wdat_sel[5]) ? wmem_rd_chksum_05:
-								(wram_wdat_sel[4]) ? wmem_rd_chksum_04:
-								(wram_wdat_sel[3]) ? wmem_rd_chksum_03:
-								(wram_wdat_sel[2]) ? wmem_rd_chksum_02:
-								(wram_wdat_sel[1]) ? wmem_rd_chksum_01:
-								(wram_wdat_sel[0]) ? wmem_rd_chksum_00:								
-								16'b0;
+//MUX READ DATA FROM MEM
+always @*
+begin: mux01
+	integer i;
+	tcp_fifo_rdata = {32{1'b0}};
+	for ( i = 0; i < WRAM_NUM; i = i + 1 )
+		if (wram_wdat_sel[i])
+		begin
+			tcp_fifo_rdata = wmem_rdat[32 * i +: 32];
+		end
+end
+
+//MUX READ DATA CHECKSUM FROM MEM	
+always @*
+begin: mux02
+	integer j;
+	wram_dat_chksum = {16{1'b0}};
+	for ( j = 0; j < WRAM_NUM; j = j + 1 )
+		if (wram_wdat_sel[j])
+		begin
+			wram_dat_chksum = wmem_rd_chksum[16 * j +: 16];
+		end
+end	
  
-//MUX DATA LENGTH FROM MEM							
-assign wram_wdat_len	= 	(wram_wdat_sel[15]) ? wmem_rd_len_15 :
-								(wram_wdat_sel[14]) ? wmem_rd_len_14 :
-								(wram_wdat_sel[13]) ? wmem_rd_len_13 :
-								(wram_wdat_sel[12]) ? wmem_rd_len_12 :
-								(wram_wdat_sel[11]) ? wmem_rd_len_11 :
-								(wram_wdat_sel[10]) ? wmem_rd_len_10 :
-								(wram_wdat_sel[9]) ? wmem_rd_len_09 :
-								(wram_wdat_sel[8]) ? wmem_rd_len_08 :
-								(wram_wdat_sel[7]) ? wmem_rd_len_07 :
-								(wram_wdat_sel[6]) ? wmem_rd_len_06 :
-								(wram_wdat_sel[5]) ? wmem_rd_len_05 :
-								(wram_wdat_sel[4]) ? wmem_rd_len_04 :
-								(wram_wdat_sel[3]) ? wmem_rd_len_03 :
-								(wram_wdat_sel[2]) ? wmem_rd_len_02 :
-								(wram_wdat_sel[1]) ? wmem_rd_len_01 :
-								(wram_wdat_sel[0]) ? wmem_rd_len_00 :
-								16'b0;
+//MUX READ DATA LENGTH FROM MEM	
+always @*
+begin: mux03
+	integer k;
+	wram_rdat_len = {16{1'b0}};
+	for ( k = 0; k < WRAM_NUM; k = k + 1 )
+		if (wram_wdat_sel[k])
+		begin
+			wram_rdat_len = wmem_rd_len[16 * k +: 16];
+		end
+end			
 
-//MUX SEQ NUM FROM MEM								
-assign wram_seq_num	=  (wram_wdat_sel[15]) ? wmem_rd_seq_num_15 :								
-								(wram_wdat_sel[14]) ? wmem_rd_seq_num_14 :
-								(wram_wdat_sel[13]) ? wmem_rd_seq_num_13 :								
-								(wram_wdat_sel[12]) ? wmem_rd_seq_num_12 :								
-								(wram_wdat_sel[11]) ? wmem_rd_seq_num_11 :								
-								(wram_wdat_sel[10]) ? wmem_rd_seq_num_10 :
-								(wram_wdat_sel[9]) ? wmem_rd_seq_num_09 :
-								(wram_wdat_sel[8]) ? wmem_rd_seq_num_08 :
-								(wram_wdat_sel[7]) ? wmem_rd_seq_num_07 :								
-								(wram_wdat_sel[6]) ? wmem_rd_seq_num_06 :
-								(wram_wdat_sel[5]) ? wmem_rd_seq_num_05 :								
-								(wram_wdat_sel[4]) ? wmem_rd_seq_num_04 :								
-								(wram_wdat_sel[3]) ? wmem_rd_seq_num_03 :								
-								(wram_wdat_sel[2]) ? wmem_rd_seq_num_02 :
-								(wram_wdat_sel[1]) ? wmem_rd_seq_num_01 :
-								(wram_wdat_sel[0]) ? wmem_rd_seq_num_00 :
-								32'b0;
+//MUX READ SEQ NUM FROM MEM
+always @*
+begin: mux04
+	integer m;
+	wram_seq_num = {32{1'b0}};
+	for ( m = 0; m < WRAM_NUM; m = m + 1 )
+		if (wram_wdat_sel[m])
+		begin
+			wram_seq_num = wmem_rd_seq_num[32 * m +: 32];
+		end
+end				
 	
 //MEM/CONTROLLER MUXES
 assign tcp_data_chksum_mux =	tcp_ctrl_data_flg ?	wram_dat_chksum : 
 																	16'b0;
-assign tcp_data_len_mux		=	tcp_ctrl_data_flg ?	wram_wdat_len : 
+assign tcp_data_len_mux		=	tcp_ctrl_data_flg ?	wram_rdat_len : 
 																	16'b0;																	
 assign tcp_seq_num_mux		=	tcp_ctrl_data_flg ?	wram_seq_num : 
 																	tcp_seq_num_o;
@@ -2012,7 +1223,7 @@ udp_full_transmitter udp_full_transmitter
 	,.be_out					(	udp_be_o			)
 	,.data_out_rdy			(	udp_data_rdy_o	)
 	,.data_out_rd			(	udp_data_out_rd)
-	,.data_in				(	udp_fifo_rdata	)
+	,.data_in				(	tcp_fifo_rdata	)
 	,.data_in_rd			(	udp_data_in_rd	)
 	,.sop						(	udp_sop			)
 	,.eop						(	udp_eop			)

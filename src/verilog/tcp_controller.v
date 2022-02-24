@@ -124,14 +124,15 @@ wire				rst_rcv;
 wire	[31:0]	tcp_ack_num_diff;
 wire				time_out_pas;
 
-wire	[MEMORY_NUM-1:	0]	mem_dat_rdy;
-wire							mem_old_dat_flg;
+reg	[MEMORY_NUM-1:	0]	mem_dat_rdy;
+reg	[MEMORY_NUM-1:	0]	mem_old_dat_all_flg;
+reg							mem_old_dat_flg;
 wire							mem_old_dat_any_flg;
 wire							mem_sel_rdy;
 
-wire	[MEMORY_NUM-1 :0] mem_notack_dat_rdy;
+reg	[MEMORY_NUM-1 :0] mem_notack_dat_rdy;
 wire	[MEMORY_NUM-1 :0] mem_notack_dat_sel;
-wire							mem_notack_dat_stop;
+reg							mem_notack_dat_stop;
 wire	[MEMORY_NUM-1:	0]	mem_notack_port_mask;
 
 
@@ -255,16 +256,7 @@ always @(posedge clk or negedge rst_n)
 	else if (ack_rcv & (state == STATE_LISTEN))
 																rst_start <= 1'b1;
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & (state == STATE_CLOSED))
-																rst_start <= 1'b1;
-																
-//LOCK CONTROL DATA
-/*
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)												ctrl_dat_lock <= 1'b0;
-	else if (sack_start | fin_start | ack_start | rst_start)
-																ctrl_dat_lock <= 1'b1;
-	else if ()*/
-
+																rst_start <= 1'b1;																
 
 //START WRITE DATA
 always @(posedge clk or negedge rst_n)
@@ -297,8 +289,7 @@ always @(posedge clk or negedge rst_n)
 
 	else if (wdat_start & (state == STATE_ESTABLISHED))
 																tcp_flags_r <= 6'h18;
-/*	else if (old_data_start & (state == STATE_ESTABLISHED))
-																tcp_flags_r <= 6'h18;*/
+
 	else if (ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_flags_r <= 6'h10;
 																
@@ -312,14 +303,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_src_port_r <= 0;
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))
-																tcp_src_port_r <= tcp_source_port_i;
-																
-//INPUT SEQUENCE NUMBER			//??????????????????
-/*
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)												tcp_seq_num_in_r <= 32'h0000_0000;
-	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)		tcp_seq_num_in_r <= tcp_seq_num_i;
-*/	
+																tcp_src_port_r <= tcp_source_port_i;																
 	
 //INPUT ACKNOWLEDGEMENT NUMBER
 always @(posedge clk or negedge rst_n)
@@ -346,10 +330,7 @@ always @(posedge clk or negedge rst_n)
 																
 	else if (tcp_wdat_stop_i & wdat_lock & (state == STATE_ESTABLISHED) & !mem_old_dat_flg)
 																tcp_seq_num_r <= tcp_seq_num_r + ram_dat_len_i;
-																
-/*																
-	else if (old_data_en & !rst_rcv & ack_rcv & (tcp_seq_num_r + 16'd1450 <= tcp_ack_num_i) & (state == STATE_ESTABLISHED))
-																tcp_seq_num_r <= tcp_seq_num_r + TCP_DATA_LENGTH_IN_BYTE;*/													
+																													
 																
 	else if (state == STATE_CLOSE_WAIT)				
 																tcp_seq_num_r <= tcp_seq_num_r;																
@@ -390,17 +371,13 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_data_len_r <= 16'd00;
 	else if (state == STATE_LISTEN)
 																tcp_data_len_r <= 16'd00;
-//`ifdef DATA_TX
+																
 	else if (wdat_start & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= ram_dat_len_i;//TCP_DATA_LENGTH_IN_BYTE;
-/*
-	else if (old_data_start & (state == STATE_ESTABLISHED))
-																tcp_data_len_r <= TCP_DATA_LENGTH_IN_BYTE;																
-*/																
-//`else
+
 	else if (ack_rcv & (tcp_data_len_i != 0) & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= 16'd00;
-//`endif															
+																
 	else if (fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= 16'd00;
 	else if (state == STATE_CLOSED)
@@ -408,14 +385,6 @@ always @(posedge clk or negedge rst_n)
 																
 
 //TCP PACKET COUNTER	TO CONTROL NUMBER OF PACKETS UNTIL ACK RECEIVED
-/*															
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)												tcp_packet_counter <= 5'd0;
-	else if (ack_rcv & (state == STATE_ESTABLISHED) & (tcp_seq_num_r == tcp_ack_num_i))
-																tcp_packet_counter <= 5'd0;
-	else if (state == STATE_LISTEN)					tcp_packet_counter <= 5'd0;
-	else if (wdat_start)									tcp_packet_counter <= tcp_packet_counter + 1'b1;*/
-	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_packet_counter <= 5'd0;
 	else if (state == STATE_CLOSED)					tcp_packet_counter <= 5'd0;	
@@ -465,100 +434,66 @@ assign time_out_pas_w = time_out_r == 0;
 //									DATA SELECTOR										  //
 //---------------------------------------------------------------------//
 //MEMORY DATA READY
-assign mem_dat_rdy = {
-									(mem_wr_lock_flg_i[15] & !mem_rd_lock_flg_i[15]),
-									(mem_wr_lock_flg_i[14] & !mem_rd_lock_flg_i[14]),
-									(mem_wr_lock_flg_i[13] & !mem_rd_lock_flg_i[13]),
-									(mem_wr_lock_flg_i[12] & !mem_rd_lock_flg_i[12]),
-									(mem_wr_lock_flg_i[11] & !mem_rd_lock_flg_i[11]),
-									(mem_wr_lock_flg_i[10] & !mem_rd_lock_flg_i[10]),
-									(mem_wr_lock_flg_i[9] & !mem_rd_lock_flg_i[9]),
-									(mem_wr_lock_flg_i[8] & !mem_rd_lock_flg_i[8]),
-									(mem_wr_lock_flg_i[7] & !mem_rd_lock_flg_i[7]),
-									(mem_wr_lock_flg_i[6] & !mem_rd_lock_flg_i[6]),
-									(mem_wr_lock_flg_i[5] & !mem_rd_lock_flg_i[5]),
-									(mem_wr_lock_flg_i[4] & !mem_rd_lock_flg_i[4]),
-									(mem_wr_lock_flg_i[3] & !mem_rd_lock_flg_i[3]),
-									(mem_wr_lock_flg_i[2] & !mem_rd_lock_flg_i[2]),
-									(mem_wr_lock_flg_i[1] & !mem_rd_lock_flg_i[1]),
-									(mem_wr_lock_flg_i[0] & !mem_rd_lock_flg_i[0])
-								};
+always @*
+begin: mem_dat_ready
+	integer r;
+	mem_dat_rdy = {MEMORY_NUM{1'b0}};
+	for ( r = 0; r < MEMORY_NUM; r = r + 1 )
+		begin
+			mem_dat_rdy[r] = mem_wr_lock_flg_i[r] & !mem_rd_lock_flg_i[r];
+		end
+end
 								
-//SELECTED DATA OLD								
-assign mem_old_dat_flg =	mem_data_sel_o[15] ? mem_rd_seq_lock_flg_i[15] :
-									mem_data_sel_o[14] ? mem_rd_seq_lock_flg_i[14] :
-									mem_data_sel_o[13] ? mem_rd_seq_lock_flg_i[13] :
-									mem_data_sel_o[12] ? mem_rd_seq_lock_flg_i[12] :
-									mem_data_sel_o[11] ? mem_rd_seq_lock_flg_i[11] :
-									mem_data_sel_o[10] ? mem_rd_seq_lock_flg_i[10] :
-									mem_data_sel_o[9] ? mem_rd_seq_lock_flg_i[9] :
-									mem_data_sel_o[8] ? mem_rd_seq_lock_flg_i[8] :
-									mem_data_sel_o[7] ? mem_rd_seq_lock_flg_i[7] :
-									mem_data_sel_o[6] ? mem_rd_seq_lock_flg_i[6] :
-									mem_data_sel_o[5] ? mem_rd_seq_lock_flg_i[5] :
-									mem_data_sel_o[4] ? mem_rd_seq_lock_flg_i[4] :
-									mem_data_sel_o[3] ? mem_rd_seq_lock_flg_i[3] :
-									mem_data_sel_o[2] ? mem_rd_seq_lock_flg_i[2] :
-									mem_data_sel_o[1] ? mem_rd_seq_lock_flg_i[1] :
-									mem_data_sel_o[0] ? mem_rd_seq_lock_flg_i[0] : 								
-									1'b0;
+//SELECTED DATA OLD
+always @*
+begin: mem_dat_old
+	integer i;
+	mem_old_dat_flg = 1'b0;
+	for ( i = 0; i < MEMORY_NUM; i = i + 1 )
+		if (mem_data_sel_o[i])
+		begin
+			mem_old_dat_flg = mem_rd_seq_lock_flg_i[i];
+		end
+end
+
+//MEMORY OLD ALL FLAGS
+always @*
+begin: mem_old_dat_all
+	integer k;
+	mem_old_dat_all_flg = {MEMORY_NUM{1'b0}};
+	for ( k = 0; k < MEMORY_NUM; k = k + 1 )
+		begin
+			mem_old_dat_all_flg[k] = !mem_rd_lock_flg_i[k] & mem_rd_seq_lock_flg_i[k];
+		end
+end
+
 									
-//MEMORY OLD ANY FLAG			//VERIFY
-assign mem_old_dat_any_flg =	(!mem_rd_lock_flg_i[15] & mem_rd_seq_lock_flg_i[15]) |
-										(!mem_rd_lock_flg_i[14] & mem_rd_seq_lock_flg_i[14]) |
-										(!mem_rd_lock_flg_i[13] & mem_rd_seq_lock_flg_i[13]) |
-										(!mem_rd_lock_flg_i[12] & mem_rd_seq_lock_flg_i[12]) |
-										(!mem_rd_lock_flg_i[11] & mem_rd_seq_lock_flg_i[11]) |
-										(!mem_rd_lock_flg_i[10] & mem_rd_seq_lock_flg_i[10]) |
-										(!mem_rd_lock_flg_i[9] & mem_rd_seq_lock_flg_i[9]) |
-										(!mem_rd_lock_flg_i[8] & mem_rd_seq_lock_flg_i[8]) |
-										(!mem_rd_lock_flg_i[7] & mem_rd_seq_lock_flg_i[7]) |
-										(!mem_rd_lock_flg_i[6] & mem_rd_seq_lock_flg_i[6]) |
-										(!mem_rd_lock_flg_i[5] & mem_rd_seq_lock_flg_i[5]) |
-										(!mem_rd_lock_flg_i[4] & mem_rd_seq_lock_flg_i[4]) |
-										(!mem_rd_lock_flg_i[3] & mem_rd_seq_lock_flg_i[3]) |
-										(!mem_rd_lock_flg_i[2] & mem_rd_seq_lock_flg_i[2]) |
-										(!mem_rd_lock_flg_i[1] & mem_rd_seq_lock_flg_i[1]) |
-										(!mem_rd_lock_flg_i[0] & mem_rd_seq_lock_flg_i[0]);
+//MEMORY OLD ANY FLAG			
+assign mem_old_dat_any_flg =	|mem_old_dat_all_flg;
 										
 //NOT ACKNOWLEDGED MEMORY SELECT STOP(ACK)
-assign mem_notack_dat_stop =	mem_notack_dat_sel[15] ? med_rd_ack_i[15]:
-										mem_notack_dat_sel[14] ? med_rd_ack_i[14]:
-										mem_notack_dat_sel[13] ? med_rd_ack_i[13]:
-										mem_notack_dat_sel[12] ? med_rd_ack_i[12]:
-										mem_notack_dat_sel[11] ? med_rd_ack_i[11]:
-										mem_notack_dat_sel[10] ? med_rd_ack_i[10]:
-										mem_notack_dat_sel[9] ? med_rd_ack_i[9]:
-										mem_notack_dat_sel[8] ? med_rd_ack_i[8]:
-										mem_notack_dat_sel[7] ? med_rd_ack_i[7]:
-										mem_notack_dat_sel[6] ? med_rd_ack_i[6]:
-										mem_notack_dat_sel[5] ? med_rd_ack_i[5]:
-										mem_notack_dat_sel[4] ? med_rd_ack_i[4]:
-										mem_notack_dat_sel[3] ? med_rd_ack_i[3]:
-										mem_notack_dat_sel[2] ? med_rd_ack_i[2]:
-										mem_notack_dat_sel[1] ? med_rd_ack_i[1]:
-										mem_notack_dat_sel[0] ? med_rd_ack_i[0]:
-										1'b0;	
+always @*
+begin: mem_notack_stop
+	integer j;
+	mem_notack_dat_stop = 1'b0;
+	for ( j = 0; j < MEMORY_NUM; j = j + 1 )
+		if (mem_notack_dat_sel[j])
+		begin
+			mem_notack_dat_stop = med_rd_ack_i[j];
+		end
+end
+	
 										
-//NOT ACKNOWLEDGED MEMORY DATA READY								
-assign mem_notack_dat_rdy	= {
-										(mem_wr_lock_flg_i[15] & mem_rd_lock_flg_i[15]),
-										(mem_wr_lock_flg_i[14] & mem_rd_lock_flg_i[14]),
-										(mem_wr_lock_flg_i[13] & mem_rd_lock_flg_i[13]),
-										(mem_wr_lock_flg_i[12] & mem_rd_lock_flg_i[12]),
-										(mem_wr_lock_flg_i[11] & mem_rd_lock_flg_i[11]),
-										(mem_wr_lock_flg_i[10] & mem_rd_lock_flg_i[10]),
-										(mem_wr_lock_flg_i[9] & mem_rd_lock_flg_i[9]),
-										(mem_wr_lock_flg_i[8] & mem_rd_lock_flg_i[8]),
-										(mem_wr_lock_flg_i[7] & mem_rd_lock_flg_i[7]),
-										(mem_wr_lock_flg_i[6] & mem_rd_lock_flg_i[6]),
-										(mem_wr_lock_flg_i[5] & mem_rd_lock_flg_i[5]),
-										(mem_wr_lock_flg_i[4] & mem_rd_lock_flg_i[4]),
-										(mem_wr_lock_flg_i[3] & mem_rd_lock_flg_i[3]),
-										(mem_wr_lock_flg_i[2] & mem_rd_lock_flg_i[2]),
-										(mem_wr_lock_flg_i[1] & mem_rd_lock_flg_i[1]),
-										(mem_wr_lock_flg_i[0] & mem_rd_lock_flg_i[0])
-									};								
+//NOT ACKNOWLEDGED MEMORY DATA READY	
+always @*
+begin: mem_notack_data_ready
+	integer n;
+	mem_notack_dat_rdy = {MEMORY_NUM{1'b0}};
+	for ( n = 0; n < MEMORY_NUM; n = n + 1 )
+		begin
+			mem_notack_dat_rdy[n] = mem_wr_lock_flg_i[n] & mem_rd_lock_flg_i[n];
+		end
+end								
 									
 //TODO
 wire sel_block = ((state != STATE_ESTABLISHED) | tcp_op_rcv_i | trnsmt_busy_i | wdat_start | !time_out_pas_w);

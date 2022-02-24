@@ -60,30 +60,6 @@ wire							send_done;
 //==========================================================================
 // RoundRobin Interrupt select
 //==========================================================================
-	
-//INTERRUPT REGISTER
-/*
-generate 
-genvar i;
-for (i = 0; i < DEVICE_NUM; i = i + 1'b1) begin: gen1
-	always @(posedge clk or negedge rst_n)
-		if (!rst_n)	irq_in[i] <= 1'b0;
-		else 			irq_in[i] <= irq_i[i];
-end
-endgenerate
-
-//BLOCK FOR SELECT SIGNAL
-always @(posedge clk or negedge rst_n)
-  if (!rst_n)	sel_block_in <= 1'b0;
-  else 			sel_block_in <= sel_block_i;
-
-//INTERRUPT LOCK
-always @(posedge clk or negedge rst_n)
-  if (!rst_n)	
-		if (!rst_n)	irq_lock_in <= 1'b0;
-		else 			irq_lock_in <= irq_lock_i;
-*/
-
 //IRQ selected flag		
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)			
@@ -170,10 +146,6 @@ always @(posedge clk or negedge rst_n)
 				
 	else if (irq_select & !irq_select_r)
 		for (m = 0; m < DEVICE_NUM; m = m + 1)
-/*			if ((m == port_num) & send_done & !irq_lock_i) 
-				sel_r[m] <= 1'b0;
-			else if ((m == port_num) & (irq_select & irq_lock_in & !irq_lock_i))
-				sel_r[m] <= 1'b0;*/
 			if (m == port_num) 
 				sel_r[m] <= 1'b1;
 			else 
