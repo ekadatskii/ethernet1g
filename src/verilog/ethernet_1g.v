@@ -393,12 +393,12 @@ altera_gmii_to_rgmii_adapter #(TX_PIPELINE_DEPTH, RX_PIPELINE_DEPTH, USE_ALTGPIO
     .rgmii_rx_ctl		(rgmii_rx_ctl),   // rgmii
 
 	//PHY TX
-    .rgmii_tx_clk		(alt_adap_txclk),   // rgmii
-    .rgmii_txd			(alt_adap_txd),      // rgmii
-    .rgmii_tx_ctl		(alt_adap_txctl),   // rgmii
+//    .rgmii_tx_clk		(alt_adap_txclk),   // rgmii
+//    .rgmii_txd			(alt_adap_txd),      // rgmii
+//    .rgmii_tx_ctl		(alt_adap_txctl),   // rgmii
 	 
-	 .rgmii_in_4_temp_reg_out	(rgmii_in_4_temp_reg_out),
-	 .rgmii_in_1_temp_reg_out	(rgmii_in_1_temp_reg_out),
+//	 .rgmii_in_4_temp_reg_out	(rgmii_in_4_temp_reg_out),
+//	 .rgmii_in_1_temp_reg_out	(rgmii_in_1_temp_reg_out),
 	 
 	 .octet_cnt (octet_cnt),
 	 .rxdv_to_mac (rxdv_to_mac),
@@ -693,6 +693,8 @@ assign packet_drop = (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i != packet_n
 //--------------------------------------------------------------------------------//
 //										TCP CONTROLLER													 //
 //--------------------------------------------------------------------------------//
+localparam RESEND_TIME = 32'd200_000_000;
+
 tcp_controller	#(WRAM_NUM) tcp_controller
 (
 	.clk							(		pll_62_5m_clk				)
@@ -710,10 +712,8 @@ tcp_controller	#(WRAM_NUM) tcp_controller
 	,.tcp_window_i				(		tcp_window_ii				)
 	,.tcp_op_rcv_rd_o			(		tcp_op_rcv_rd_o			)
 	
-	//INPUT FLAGS/DATA PARAMETERS FROM MUX
-//	,.ram_dat_rdy_i			(		wram_rdat_rdy				)
-//	,.ram_oldseq_flg_i		(		wram_oldseq_flg			)
 	,.ram_dat_len_i			(		wram_rdat_len				)
+	,.resend_time_i			(		RESEND_TIME					)
 	
 
 	//OUTPUT PARAMETERS TO SEND TCP PACKET
@@ -786,8 +786,11 @@ wire	[ 5:0]		tcp_flags_o;
 wire					tcp_ctrl_cmd_start_o;
 wire	[15:0]		tcp_window			= 16'd40000;						//TODO change size
 wire	[15:0]		tcp_urgent_ptr		= 16'h0000;
-wire	[95:0]		tcp_options			= 96'h020405b4_01_030308_01_01_0402; //SACK PERMITTED
-wire	[ 3:0]		tcp_options_len	= 4'd2;
+//wire	[95:0]		tcp_options			= 96'h020405b4_01_030308_01_01_0402; 
+wire	[95:0]		tcp_options			= {16'h0204, tcp_max_seg_size, 8'h01, 16'h0303, tcp_window_scale, 8'h01, 8'h01, 16'h0000}; //16'h0402 SACK OPTION
+wire	[15:0]		tcp_max_seg_size	= TCP_DATA_LENGTH_IN_BYTE; //16'd1460;
+wire	[ 3:0]		tcp_options_len	= 4'd2;				//NO SACK OPTION ADD
+wire	[ 7:0]		tcp_window_scale	= 8'h00;
 wire	[31:0]		tcp_seq_num_next;
 wire	[15:0]		tcp_data_len_o;
 wire					wdat_start_o;
@@ -872,7 +875,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 assign timer_pas2 = timer_reg_r == 0;
 
 
-localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1448;
+localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1448;//16'd1448;			//SHOULD BE LESS THEN RAM SIZE(2048)
 
 reg 				gen_start;
 reg 				gen_run;	
@@ -880,7 +883,7 @@ reg	[31:0]	gen_data;
 reg	[15:0]	gen_data_chkr;
 reg	[63:0]	gen_packet_num;
 reg	[ 3:0]	gen_content_chkr;
-reg	[4:0]		gen_mem_chkr;
+reg	[5:0]		gen_mem_chkr;
 
 wire 				gen_stop;
 wire	[15:0]	gen_data_len;
@@ -1047,26 +1050,29 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									MEMORY GEN 											  //
 //---------------------------------------------------------------------//
-localparam		WRAM_NUM = 16;
+localparam				WRAM_NUM = 16;
+localparam	[31:0]	MEMORY_TIME = 32'd200_000_000;
 
 genvar mem_gen;
 
 generate 
 	for (mem_gen = 0; mem_gen < WRAM_NUM; mem_gen = mem_gen + 1) begin: memory_generation
-		tcp_wr_memory #(1450)	tcp_wr_memory_0
+		tcp_wr_memory tcp_wr_memory_0
 			(
 				.clk									(		pll_62_5m_clk						)
 				,.rst_n								(		rst_n									)
 	
 				//INPUT DATA																	
-				,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o					)			
+				,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o					)
+				,.tcp_fin_flag_i					(		tcp_flags_ii[0]					)
 				,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]					)
 				,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]					)
 				,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii						)		
 				,.tcp_seq_num_next_i				(		tcp_seq_num_next					)
 	
-				,.controller_idle_st_i			(		tcp_ctrl_state_idle				)
+				,.controller_work_st_i			(		tcp_state_estblsh_o				)
 				,.seq_num_i							(		tcp_seq_num_o						)
+				,.mem_time_i						(		MEMORY_TIME							)
 	
 				//INPUT DATA FROM DATA GENERATOR OR WORK DATA
 				,.wdat_i								(		gen_data								)

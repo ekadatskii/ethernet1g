@@ -1,10 +1,9 @@
 //---------------------------------------------------------------------------------------------------------------------------//
 //																																									  //
-//																		DEVICE ARBITER																			  //
+//																UNCONFIRMED MEMORY TCP ARBITER															  //
 //																																									  //
 //---------------------------------------------------------------------------------------------------------------------------//
-//Controller used to multiplex data from different Controllers
-
+//MEMORY SELECT ARBITER TO COLLECT OLDEST POINTER OF UNCONFIRMED MEMORY
 module tcp_unconf_mem_arbiter #(parameter DEVICE_NUM)
 (
 	input						clk,
@@ -20,7 +19,6 @@ module tcp_unconf_mem_arbiter #(parameter DEVICE_NUM)
 
 	//Change port mask
 	input			[size-1 : 0]			port_mask_i,
-	input										port_mask_chng_i,
 	output		[size-1 : 0]			port_mask_o,
 
 	
@@ -78,8 +76,6 @@ integer n;
 always @(posedge clk or negedge rst_n)
   if (!rst_n)			
 					port_num	<= {size{1'b0}};
-  else if (port_mask_chng_i)	
-					port_num	<= {size{1'b0}};
 					
   else if (|irq_in & !irq_select & !send_done)
     for (n = 0; n < width; n = n + 1)
@@ -102,8 +98,6 @@ assign irq_avbl_select = irq_all_sel != 0;
 always @(posedge clk or negedge rst_n)
   if (!rst_n)			
 					irq_select	<= 1'b0;
-  else if (port_mask_chng_i)
-					irq_select	<= 1'b0;
 					
   else if (send_done) 
 					irq_select <= 1'b0;	
@@ -117,8 +111,6 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)
 					irq_select_r <= 1'b0;
-	else if (port_mask_chng_i)
-					irq_select_r <= 1'b0;
 					
 	else if (send_done)
 					irq_select_r <= 1'b0;	
@@ -130,8 +122,6 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)			
 					port_mask	<= width;
-	else if (port_mask_chng_i)
-					port_mask <= port_mask_i;
 				
 	else if (irq_select & send_done & (port_num == 0))
 					port_mask <= width;
@@ -159,8 +149,6 @@ integer m;
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 
 				sel_r <= {DEVICE_NUM{1'b0}};				
-	else if (port_mask_chng_i)
-				sel_r <= {DEVICE_NUM{1'b0}};
 				
 	else if (irq_select)
 		for (m = 0; m < DEVICE_NUM; m = m + 1)
@@ -182,6 +170,7 @@ assign port_number_o = port_num;
 assign port_mask_o	= port_mask;
 
 //TEST
+/*
 always @(posedge clk or negedge rst_n)
   if (!rst_n)			port_num_old <= 0;
   else 					port_num_old <= port_num_cur;
@@ -190,7 +179,7 @@ always @(posedge clk or negedge rst_n)
   if (!rst_n)			port_num_cur <= 0; 
   else 					port_num_cur <= port_num;
   
-assign 					port_num_flag_o = (port_num_old > port_num_cur) ? ((port_num_old - port_num_cur) > 1) : 1'b0;
+assign 					port_num_flag_o = (port_num_old > port_num_cur) ? ((port_num_old - port_num_cur) > 1) : 1'b0;*/
   
  	
 endmodule

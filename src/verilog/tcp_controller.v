@@ -1,4 +1,3 @@
-`define DATA_TX
 module tcp_controller #(parameter MEMORY_NUM)
 (
 	input						clk
@@ -16,10 +15,8 @@ module tcp_controller #(parameter MEMORY_NUM)
 	,input	[15:0]		tcp_window_i
 	,output					tcp_op_rcv_rd_o
 	
-	//INPUT FLAGS/DATA PARAMETERS FROM MUX
-//	,input					ram_dat_rdy_i
-//	,input					ram_oldseq_flg_i
 	,input	[15:0]		ram_dat_len_i
+	,input	[31:0]		resend_time_i
 	
 	//OUTPUT PARAMETERS TO SEND TCP PACKET
 	,output	[15:0]		tcp_source_port_o
@@ -56,20 +53,20 @@ module tcp_controller #(parameter MEMORY_NUM)
 	
 );
 
-localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
+localparam			TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
 
-localparam [15:0]	LOCAL_PORT = 16'hF718; //63256
+localparam [15:0]	LOCAL_PORT					= 16'hF718; //63256
 
 localparam			STATE_LISTEN		= 7'b000_0001;
 localparam			STATE_SYN_RCVD		= 7'b000_0010;
 localparam			STATE_ESTABLISHED	= 7'b000_0100;
+localparam			STATE_CLOSE_WAIT	= 7'b000_1000;	
+localparam			STATE_LAST_ACK		= 7'b001_0000;
+localparam			STATE_CLOSED		= 7'b010_0000;
 //localparam			STATE_FINWAIT1	= 7'b000_0100;
 //localparam			STATE_FINWAIT2	= 7'b000_0100;
 //localparam			STATE_CLOSING	= 7'b000_0100;
 //localparam			STATE_TIMEWAIT	= 7'b000_0100;
-localparam			STATE_CLOSE_WAIT	= 7'b000_1000;	//
-localparam			STATE_LAST_ACK		= 7'b001_0000;	//
-localparam			STATE_CLOSED		= 7'b010_0000;
 
 reg	[ 7:0]	state;
 reg				sack_start;
@@ -88,26 +85,19 @@ reg	[ 3:0]	tcp_head_len_r;
 reg	[15:0]	tcp_data_len_r;
 reg	[4:0]		tcp_packet_counter;
 reg	[31:0]	tcp_window_r;
-reg	[31:0]	ISS;	//initial sequence number
-reg	[31:0]	SND_NEXT;	//next sequence number
+reg	[31:0]	ISS;					//initial sequence number
+reg	[31:0]	SND_NEXT;			//next sequence number
 reg	[31:0]	ACK_NEXT;
-reg	[31:0]	SND_UNA;		//unacknowledged sequence number
+reg	[31:0]	SND_UNA;				//unacknowledged sequence number
 reg				tcp_op_rcv_rd_r;
 reg	[31:0]	time_out_r;
 reg	[15:0]	tcp_dest_port_r;
 reg	[15:0]	tcp_src_port_r;
 
-
-reg	[31:0]	test3_o_r;
-reg	[31:0]	test4_o_r;
-reg	[31:0]	test5_o_r;
-
-//reg				old_data_en;
-//reg				old_data_start;
-//reg				old_data_lock;
-
+//TCP FLAGS
 //	FLAG[5]	|	FLAG[4]	|	FLAG[3]	|	FLAG[2]	|	FLAG[1]	|	FLAG[0]
 //	URGENT	|	ACK		|	PUSH		|	RST		|	SYN		|	FIN
+
 wire				flag_urg_i;
 wire				flag_ack_i;
 wire				flag_psh_i;
@@ -129,11 +119,20 @@ reg	[MEMORY_NUM-1:	0]	mem_old_dat_all_flg;
 reg							mem_old_dat_flg;
 wire							mem_old_dat_any_flg;
 wire							mem_sel_rdy;
+wire 							sel_block;
+wire							port_mask_change;
+wire							wdat_stop;
+wire							mem_notack_sel_rdy;
 
 reg	[MEMORY_NUM-1 :0] mem_notack_dat_rdy;
 wire	[MEMORY_NUM-1 :0] mem_notack_dat_sel;
 reg							mem_notack_dat_stop;
 wire	[MEMORY_NUM-1:	0]	mem_notack_port_mask;
+
+/*
+reg	[31:0]	test3_o_r;
+reg	[31:0]	test4_o_r;
+reg	[31:0]	test5_o_r;*/
 
 
 
@@ -157,19 +156,9 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)									tcp_op_rcv_rd_r <= 1'b0;
 	else if (tcp_op_rcv_rd_r)				tcp_op_rcv_rd_r <= 1'b0;
 	else if (!wdat_start & !ctrl_cmd_start_o & !trnsmt_busy_i & tcp_op_rcv_i)
-													tcp_op_rcv_rd_r <= 1'b1;
-/*
-//OLD DATA ENABLE FLAG
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)									old_data_en <= 1'b0;
-	else if ((state == STATE_LISTEN) & ram_lock_any_i)	
-													old_data_en <= 1'b1;
-	else if ((state == STATE_ESTABLISHED) & !ram_lock_any_i)
-													old_data_en <= 1'b0;
-*/													
-
+													tcp_op_rcv_rd_r <= 1'b1;												
 	
-
+//TCP STATE CONTROLLER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)		state <= STATE_LISTEN;
 	else 
@@ -246,7 +235,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												ack_start <= 1'b0;
 	else if (ack_start)									ack_start <= 1'b0;
-	else if (ack_rcv & !fin_rcv  & (tcp_data_len_i != 0) & (state == STATE_ESTABLISHED))
+	else if (ack_rcv & !fin_rcv & !rst_rcv & (tcp_data_len_i != 0) & (state == STATE_ESTABLISHED))
 																ack_start <= 1'b1;
 
 //START RESET SEND
@@ -263,7 +252,7 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)												wdat_start <= 1'b0;
 	else if (state == STATE_CLOSED)					wdat_start <= 1'b0;	
 	else if (wdat_start)									wdat_start <= 1'b0;
-	else if (!tcp_op_rcv_i & !ctrl_cmd_start_o & !wdat_lock & !trnsmt_busy_i & (tcp_packet_counter < 16) & (tcp_window_r > 25000) & (state == STATE_ESTABLISHED) & mem_sel_rdy & !mem_old_dat_flg)//TODO may be for old data need another window size or packet counter
+	else if (!tcp_op_rcv_i & !ctrl_cmd_start_o & !wdat_lock & !trnsmt_busy_i & (tcp_packet_counter < 16) & (tcp_window_r > 25000) & (state == STATE_ESTABLISHED) & mem_sel_rdy & !mem_old_dat_flg)
 																wdat_start <= 1'b1;
 	else if (!tcp_op_rcv_i & !ctrl_cmd_start_o & !wdat_lock & !trnsmt_busy_i & (state == STATE_ESTABLISHED) & mem_sel_rdy & mem_old_dat_flg & time_out_pas_w)
 																wdat_start <= 1'b1;																
@@ -272,7 +261,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												wdat_lock <= 1'b0;
 	else if (state == STATE_CLOSED)					wdat_lock <= 1'b0;
-	else if (tcp_wdat_stop_i & (state == STATE_ESTABLISHED))//(ack_rcv & !fin_rcv & (state == STATE_ESTABLISHED))
+	else if (tcp_wdat_stop_i & (state == STATE_ESTABLISHED))
 																wdat_lock <= 1'b0;	
 	else if (wdat_start)		
 																wdat_lock <= 1'b1;												
@@ -280,10 +269,13 @@ always @(posedge clk or negedge rst_n)
 //TCP FLAGS REG FOR WRITE OPERATIONS
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_flags_r <= 6'h0;
-//RST+ACK WHEN ACK RECEIVED IN LISTEN STATE
+	//RST RECEIVED
+	else if (rst_rcv)
+																tcp_flags_r <= 6'h00;
+	//RST+ACK WHEN ACK RECEIVED IN LISTEN STATE
 	else if (ack_rcv & (state == STATE_LISTEN))	
 																tcp_flags_r <= 6'h14;
-//SYN+ACK SEND WHEN SYN RECEIVED
+	//SYN+ACK SEND WHEN SYN RECEIVED
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))	
 																tcp_flags_r <= 6'h12;															
 
@@ -306,9 +298,10 @@ always @(posedge clk or negedge rst_n)
 																tcp_src_port_r <= tcp_source_port_i;																
 	
 //INPUT ACKNOWLEDGEMENT NUMBER
+/*
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_ack_num_in_r <= 32'h0000_0000;
-	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)		tcp_ack_num_in_r <= tcp_ack_num_i;
+	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)		tcp_ack_num_in_r <= tcp_ack_num_i;*/
 	
 //NEXT RECEIVE ACKNOWLEDGE NUMBER
 always @(posedge clk or negedge rst_n)
@@ -320,18 +313,22 @@ always @(posedge clk or negedge rst_n)
 
 //TCP SEQUENCE NUMBER FOR WRITE
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)												tcp_seq_num_r <= 32'h0000_0000;																//mem_old_dat_flg
+	if (!rst_n)												tcp_seq_num_r <= 32'h0000_0000;
+	else if (rst_rcv)
+																tcp_seq_num_r <= tcp_seq_num_r;
+																
 	else if (ack_rcv & (state == STATE_LISTEN))	
-																tcp_seq_num_r <= tcp_ack_num_i;//tcp_seq_num_r + 1'b1;
+																tcp_seq_num_r <= tcp_ack_num_i;
+																
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))		
-																tcp_seq_num_r <= ISS;//tcp_seq_num_i;//ISS;//tcp_seq_num_r + 1'b1;
+																tcp_seq_num_r <= ISS;						//tcp_seq_num_i;//ISS;//tcp_seq_num_r + 1'b1;
+																
 	else if (ack_rcv & (state == STATE_SYN_RCVD))
 																tcp_seq_num_r <= tcp_seq_num_r + 1'b1;
 																
 	else if (tcp_wdat_stop_i & wdat_lock & (state == STATE_ESTABLISHED) & !mem_old_dat_flg)
 																tcp_seq_num_r <= tcp_seq_num_r + ram_dat_len_i;
 																													
-																
 	else if (state == STATE_CLOSE_WAIT)				
 																tcp_seq_num_r <= tcp_seq_num_r;																
 
@@ -340,18 +337,26 @@ always @(posedge clk or negedge rst_n)
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & !ack_rcv & (state == STATE_CLOSED))
 																tcp_seq_num_r <= tcp_seq_num_r;															
 
-																
+
 //TCP ACKNOWLEDGMENT NUMBER FOR WRITE
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_ack_num_r <= 32'h0000_0000;
+	
+	else if (rst_rcv)
+																tcp_ack_num_r <= tcp_seq_num_i;
+	
 	else if (ack_rcv & (state == STATE_LISTEN))
 																tcp_ack_num_r <= tcp_seq_num_i;
+																
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))	
 																tcp_ack_num_r <= tcp_seq_num_i + 1'b1;
+																
 	else if (fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_ack_num_r <= tcp_seq_num_i + 1'b1;
+																
 	else if (ack_rcv & (state == STATE_ESTABLISHED) & (tcp_seq_num_i == ACK_NEXT))
 																tcp_ack_num_r <= tcp_seq_num_i + tcp_data_len_i;
+																
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & !rst_rcv & !ack_rcv & (state == STATE_CLOSED))
 																tcp_ack_num_r <= tcp_seq_num_i + tcp_data_len_i;																	
 
@@ -370,16 +375,19 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_data_len_r <= 16'd00;
 	else if (state == STATE_LISTEN)
+																tcp_data_len_r <= 16'd00;																
+	else if (rst_rcv)
 																tcp_data_len_r <= 16'd00;
 																
 	else if (wdat_start & (state == STATE_ESTABLISHED))
-																tcp_data_len_r <= ram_dat_len_i;//TCP_DATA_LENGTH_IN_BYTE;
+																tcp_data_len_r <= ram_dat_len_i;
 
 	else if (ack_rcv & (tcp_data_len_i != 0) & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= 16'd00;
 																
 	else if (fin_rcv & (state == STATE_ESTABLISHED))
 																tcp_data_len_r <= 16'd00;
+																
 	else if (state == STATE_CLOSED)
 																tcp_data_len_r <= 16'd00;																
 																
@@ -397,12 +405,14 @@ always @(posedge clk or negedge rst_n)
 //WINDOW SIZE RECEIVE FOR BUFFER LOAD CONTROL
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_window_r <= 32'd0;
+	
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o & (state == STATE_SYN_RCVD))
 																tcp_window_r <= {16'b0, tcp_window_i};
+																
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o  & (state == STATE_ESTABLISHED))
 																tcp_window_r <= tcp_ack_num_i + tcp_window_i - tcp_seq_num_r;
-	
-	
+
+/*
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)																test3_o_r <= 32'b0;
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)						test3_o_r <= tcp_seq_num_r;
@@ -413,7 +423,7 @@ always @(posedge clk or negedge rst_n)
 	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)																test5_o_r <= 32'b0;
-	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)						test5_o_r <= {test5_o_r[15:0], tcp_window_r};
+	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)						test5_o_r <= {test5_o_r[15:0], tcp_window_r};*/
 	
 //TIMER
 always @(posedge clk or negedge rst_n)
@@ -423,16 +433,16 @@ always @(posedge clk or negedge rst_n)
 					time_out_r <= 0;
 					
 	else if ((state == STATE_ESTABLISHED) & wdat_start & mem_old_dat_flg)
-					time_out_r <= 32'd200_000_000;
+					time_out_r <= resend_time_i;
 					
 	else if (!time_out_pas_w)
 					time_out_r <= time_out_r - 1'b1;
 					
 assign time_out_pas_w = time_out_r == 0;
 
-//---------------------------------------------------------------------//
-//									DATA SELECTOR										  //
-//---------------------------------------------------------------------//
+//----------------------------------------------------------------------------------//
+//									MEMORY DATA SELECTORs AND ARBITERS							   //
+//----------------------------------------------------------------------------------//
 //MEMORY DATA READY
 always @*
 begin: mem_dat_ready
@@ -483,7 +493,6 @@ begin: mem_notack_stop
 		end
 end
 	
-										
 //NOT ACKNOWLEDGED MEMORY DATA READY	
 always @*
 begin: mem_notack_data_ready
@@ -495,66 +504,56 @@ begin: mem_notack_data_ready
 		end
 end								
 									
-//TODO
-wire sel_block = ((state != STATE_ESTABLISHED) | tcp_op_rcv_i | trnsmt_busy_i | wdat_start | !time_out_pas_w);
-wire port_mask_change = (state != STATE_ESTABLISHED);
+//BLOCK SELECT IN ARBITER WHEN IRQs NOT READY OR CONTROLLER IN PROCESS
+assign sel_block = ((state != STATE_ESTABLISHED) | tcp_op_rcv_i | trnsmt_busy_i | wdat_start | !time_out_pas_w);
+
+//CHANGE ARBITER PORT MASK TO SELECT NEXT OLD UNACK DATA MEMORY
+assign port_mask_change = (state != STATE_ESTABLISHED) & mem_notack_sel_rdy;
+
+//STOP DATA SEND
+assign wdat_stop = tcp_wdat_stop_i & wdat_lock;
 
 //MEMORY DATA SELECT
 tcp_mem_arbiter #(MEMORY_NUM) tcp_mem_arbiter
 (
-	.clk						(	clk						)
-	,.rst_n					(	rst_n						)
+	.clk						(		clk							)
+	,.rst_n					(		rst_n							)
 	
 	//Connection with controllers
-	,.sel_block_i			(	sel_block				)
-	,.irq_i					(	mem_dat_rdy				)
-	,.irq_repeat_i			(	mem_old_dat_flg		)
-	,.irq_any_repeat_i	(	mem_old_dat_any_flg	)
-	,.sel_o					(	mem_data_sel_o			)
-	,.sel_rdy_o				(	mem_sel_rdy				)									
+	,.sel_block_i			(		sel_block					)
+	,.irq_i					(		mem_dat_rdy					)
+	,.irq_repeat_i			(		mem_old_dat_flg			)
+	,.irq_any_repeat_i	(		mem_old_dat_any_flg		)
+	,.sel_o					(		mem_data_sel_o				)
+	,.sel_rdy_o				(		mem_sel_rdy					)									
 	
-	,.port_mask_i			(	mem_notack_port_mask	)	//(	wram_unconf_port_mask)			TODO
-	,.port_mask_chng_i	(	port_mask_change		)	//(	tcp_ctrl_state_idle	)
+	,.port_mask_i			(		mem_notack_port_mask		)	
+	,.port_mask_chng_i	(		port_mask_change			)	
 		
 	//Connection with encoder
-	,.stop_i					(	tcp_wdat_stop_i & wdat_lock		)	//( tcp_run & udp_eop & tcp_ctrl_data_flg )
-//	,.stop_i					(	wdat_lock & tcp_wdat_stop_i	)	//( tcp_run & udp_eop & tcp_ctrl_data_flg )
+	,.stop_i					(		wdat_stop					)	
 );	
 
 //MEMORY NOT ACKNOWLEDGED ARBITER
 
 tcp_unconf_mem_arbiter #(MEMORY_NUM) tcp_mem_notack_arbiter
 (
-	.clk						(	clk						)
-	,.rst_n					(	rst_n						)
+	.clk						(		clk							)
+	,.rst_n					(		rst_n							)
 	
-	//Connection with end controller
-	,.wr_allow_i			(	1'b1						)
 	
 	//Connection with controllers
-	
-	,.irq_i					(	mem_notack_dat_rdy	)	
-	,.sel_o					(	mem_notack_dat_sel	)	
-	,.sel_rdy_o				(								)											
-	
-	,.port_mask_chng_i	(	1'b0						)
-	,.port_mask_o			(	mem_notack_port_mask	)
+	,.irq_i					(		mem_notack_dat_rdy		)
+	,.sel_o					(		mem_notack_dat_sel		)	
+	,.sel_rdy_o				(		mem_notack_sel_rdy		)											
+	,.port_mask_o			(		mem_notack_port_mask		)
 		
 	//Connection with encoder
-	,.stop_i					( mem_notack_dat_stop	)
+	,.stop_i					( 		mem_notack_dat_stop		)
 );
-
-
-	
-assign	test3_o =test3_o_r;
-assign	test4_o =test4_o_r;
-assign	test5_o =test5_o_r;
-	
-assign tcp_ack_num_diff = (tcp_seq_num_r > tcp_ack_num_in_r) ? (tcp_seq_num_r - tcp_ack_num_in_r) : (tcp_ack_num_in_r - tcp_seq_num_r);
-															
-	
+											
+//OUTPUT SIGNALS	
 assign tcp_wdat_start_o			= wdat_start;
-//assign old_data_start_o			= old_data_start;
 assign tcp_data_len_o			= tcp_data_len_r;
 assign tcp_flags_o				= tcp_flags_r;
 assign ctrl_cmd_start_o	= sack_start | fin_start | ack_start | rst_start;
@@ -567,9 +566,14 @@ assign tcp_op_rcv_rd_o			= tcp_op_rcv_rd_r;
 assign tcp_state_listen_o		= (state == STATE_LISTEN);
 assign tcp_state_estblsh_o		= (state == STATE_ESTABLISHED);
 assign tcp_seq_num_next_o		= tcp_seq_num_r;
-//assign old_data_en_o				= old_data_en;
 
+/*
 assign test_o = tcp_ack_num_diff;
 assign tet2_o = {31'b0, {(tcp_window_r < 6000)}};
+assign test3_o =test3_o_r;
+assign test4_o =test4_o_r;
+assign test5_o =test5_o_r;
+assign tcp_ack_num_diff = (tcp_seq_num_r > tcp_ack_num_in_r) ? (tcp_seq_num_r - tcp_ack_num_in_r) : (tcp_ack_num_in_r - tcp_seq_num_r);*/
+
 
 endmodule

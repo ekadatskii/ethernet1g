@@ -1,26 +1,30 @@
-//TCP MEMORY
+//---------------------------------------------------------------------------------------------------------------------//
+//																																							  //
+//																TCP MEMORY 																				  //
+//																																							  //
+//---------------------------------------------------------------------------------------------------------------------//
 //FLAGS DESCRIPTION
-//data_wr_lock_r, data_rd_lock_r, seq_num_lock_r, rd_op_o
-//data_wr_lock_r == 0, rd_op_w == 0 - NEED TO FILL MEMORY
-//data_wr_lock_r == 1, rd_op_w == 0 - NEW DATA, NEED TO READ IT
-//data_wr_lock_r == 1, rd_op_w == 1 - READING IN PROCESS
+//data_wr_lock_r, data_rd_lock_r, seq_num_lock_r
+//data_wr_lock_r == 0 														 - MEMORY EMPty OR DATA WRITE NOT COMPLETED
 //data_wr_lock_r == 1, data_rd_lock_r == 0, seq_num_lock_r == 0 - NEED TO READ DATA WITH NEW GENERATED SEQUENCE NUMBER, NO WRITE
 //data_wr_lock_r == 1, data_rd_lock_r == 0, seq_num_lock_r == 1 - NEED TO READ DATA WITH CURRENT SEQUENCE NUMBER, NO WRITE
 //data_wr_lock_r == 1, data_rd_lock_r == 1, seq_num_lock_r == 1 - NO READ, NO WRITE. WHAIT ACKNOWLEDGE RECEIVE OR TIMER PAS OR TCP CONTROLLER IDLE STATE
-module tcp_wr_memory #(parameter MAX_PACKET_SIZE = 1450)
+module tcp_wr_memory
 (
 	input						clk
 	,input					rst_n
 	
 	//INPUT DATA
 	,input					tcp_rcv_eop_i
+	,input					tcp_fin_flag_i
 	,input					tcp_rcv_rst_flag_i
 	,input					tcp_rcv_ack_flag_i
 	,input	[31:0]		tcp_rcv_ack_num_i
 	,input	[31:0]		tcp_seq_num_next_i
 	
-	,input					controller_idle_st_i
+	,input					controller_work_st_i
 	,input	[31:0]		seq_num_i
+	,input	[31:0]		mem_time_i
 	
 	//INPUT DATA FROM DATA GENERATOR OR WORK DATA
 	,input	[31:0]		wdat_i
@@ -53,7 +57,6 @@ reg	[15:0]	data_chksum_r;
 reg	[15:0]	data_len_r;
 reg				data_wr_lock_r;
 reg				data_rd_lock_r;
-reg				data_rd_lock_rr;
 reg				wait_ack_timer_on_r;
 reg	[31:0]	wait_ack_timer_r;
 reg				rd_op_r;
@@ -146,16 +149,20 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)
 					data_wr_lock_r <= 0;
-	//CLEAR WHEN DATA ACKNOWLEDGED	
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w & !controller_idle_st_i & (data_rd_lock_r | seq_num_lock_r))
-					data_wr_lock_r <= 0;
 	//SET WHEN WRITE COMPLETE
 	else if (wr_op_stop_i & wr_sel_i)
 					data_wr_lock_r <= 1;
+	//CLEAR WHEN DATA ACKNOWLEDGED	
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w & controller_work_st_i & (data_rd_lock_r | seq_num_lock_r))
+					data_wr_lock_r <= 0;
+
 					
 //ACKNOWLEDGE HIT
-assign ack_hit_w =	((seq_num_r + data_len_r - 1) < tcp_seq_num_next_i) ? ((seq_num_r + data_len_r - 1) < tcp_rcv_ack_num_i) :
+assign ack_hit_w =	//0 <= segment,last_segment,ack_num <= 4_294_967_295
+							((seq_num_r + data_len_r - 1) < tcp_seq_num_next_i) ? ((seq_num_r + data_len_r - 1) < tcp_rcv_ack_num_i) :
+							//segment <= 4_294_967_295		last_segment >= 0   ack_num >= 0
 							((seq_num_r + data_len_r - 1) > tcp_seq_num_next_i) ? ((tcp_rcv_ack_num_i <= tcp_seq_num_next_i) & ((seq_num_r + data_len_r - 1) > tcp_rcv_ack_num_i)) :
+							//segment <= 4_294_967_295		last_segment >= 0   ack_num <= 4_294_967_295
 																									((tcp_rcv_ack_num_i  > tcp_seq_num_next_i) & ((seq_num_r + data_len_r - 1) < tcp_rcv_ack_num_i));
 					
 //DATA READ LOCKED
@@ -163,10 +170,10 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)
 					data_rd_lock_r <= 0;
 	//CLEAR WHEN TCP CONTROLLER IN IDLE STATE
-	else if (controller_idle_st_i)
+	else if (!controller_work_st_i)
 					data_rd_lock_r <= 0;
 	//CLEAR WHEN DATA ACKNOWLEDGED
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w)	
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w)	
 					data_rd_lock_r <= 1'b0;
 	//TODO CLEAR WHEN TIMER OVER
 	else if (wait_ack_timer_pas_w)
@@ -174,24 +181,16 @@ always @(posedge clk or negedge rst_n)
 	//SET WHEN READ COMPLETE
 	else if (rd_op_stop_i & rd_sel_i & data_wr_lock_r & !seq_num_lock_r)
 					data_rd_lock_r <= 1'b1;
-					
-//DATA READ LOCKED SHIFT
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)
-					data_rd_lock_rr <= 0;
-	else
-					data_rd_lock_rr <= data_rd_lock_r;
-
-					
+									
 //TIMER ON
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)	
 					wait_ack_timer_on_r <= 0;
 	//CLEAR WHEN TCP CONTROLLER IN IDLE STATE
-	else if (controller_idle_st_i)
+	else if (!controller_work_st_i)
 					wait_ack_timer_on_r <= 0;
 	//CLEAR WHEN DATA ACKNOWLEDGED
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w)	
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w)	
 					wait_ack_timer_on_r <= 1'b0;
 	//SET WHEN DATA READ COMPLETE				
 	else if (data_rd_lock_r)
@@ -200,11 +199,11 @@ always @(posedge clk or negedge rst_n)
 //TIMER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)	
-					wait_ack_timer_r <= 32'd200_000_000;
+					wait_ack_timer_r <= mem_time_i;
 	else if (!data_rd_lock_r)
-					wait_ack_timer_r <= 32'd200_000_000;
+					wait_ack_timer_r <= mem_time_i;
 	else if (wait_ack_timer_pas_w)
-					wait_ack_timer_r <= 32'd200_000_000;
+					wait_ack_timer_r <= mem_time_i;
 	else
 					wait_ack_timer_r <= wait_ack_timer_r - 1'b1;
 
@@ -215,10 +214,10 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)
 					seq_num_lock_r <= 0;
 	//CLEAR WHEN TCP CONTROLLER IN IDLE STATE
-	else if (controller_idle_st_i)
+	else if (!controller_work_st_i)
 					seq_num_lock_r <= 0;
 	//CLEAR WHEN DATA ACKNOWLEDGED
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w)
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w)
 					seq_num_lock_r <= 1'b0;
 	//SET WHEN DATA READ COMPLETE				
 	else if (rd_op_stop_i & rd_sel_i & data_wr_lock_r)
@@ -237,13 +236,12 @@ assign rd_op_w	= rd_op_r | (rd_op_start_i & rd_sel_i);
 
 //OUTPUT SIGNALS
 //----------------------------------------------------
-assign wr_lock_flg_o			= data_wr_lock_r;// | rd_op_w;
+assign wr_lock_flg_o			= data_wr_lock_r;
 assign rd_lock_flg_o			= data_rd_lock_r;
 assign rd_seq_lock_flg_o	= seq_num_lock_r;
 assign rd_seq_num_o			= (!seq_num_lock_r) ? seq_num_i : seq_num_r;
 assign rd_chksum_o			= data_chksum_r;
 assign rd_len_o 				= data_len_r;
-//assign rd_data_ack_o			= !data_rd_lock_r & data_rd_lock_rr;
-assign rd_data_ack_o			= data_rd_lock_r & (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w);
+assign rd_data_ack_o			= data_rd_lock_r & (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w);
 
 endmodule
