@@ -48,6 +48,11 @@ reg [2:0]	rst_rr;
 
 reg [11:0]	rxdat_to_mac;
 reg			rxdv_to_mac;
+reg			rxerr_to_mac;
+reg			rxcrs_to_mac;
+reg			rxcol_to_mac;
+reg [3:0]	mac_txen_reg;
+reg [2:0]	col_to_mac;
 
 //TEST POS/NEG INPUT REGISTERS
 reg 	[3:0] rgmii_pos;
@@ -77,6 +82,8 @@ wire	[9:0]		data_to_fifo;
 wire	[9:0]		data_from_fifo;
 wire	[7:0]		data_to_mac;
 wire				dv_to_mac;
+wire				err_to_mac;
+wire				crs_to_mac;
 wire				fifo_empty;
 wire				fifo_full;
 
@@ -274,138 +281,79 @@ altpll_125sh	altpll_125sh_inst
 //OPENCORES 10/100/1000 ETHERNET module
 MAC_top MAC_top
 (
-	.Reset         	(!rst_n)          ,
-	.Clk_user         (pll_62_5m_clk) 	,
-               //system signals
+	.Reset				(		!rst_n				)
+	,.Clk_user			(		pll_62_5m_clk		)
+	
+   //system signals
+	,.Clk_125M			(		clk_125				)
+	,.Clk_reg			(		pll_62_5m_clk		)
 
-	.Clk_125M         (clk_125),
+	/*output  [2:0]   Speed                   ,		Speed[2] - gtx(125Mhz), Speed[1] - 25Mhz, Speed[0] - 2.5 Mhz*/
 
-	.Clk_reg          (pll_62_5m_clk),
-/*
-output  [2:0]   Speed                   ,		Speed[2] - gtx(125Mhz), Speed[1] - 25Mhz, Speed[0] - 2.5 Mhz
-*/
-                //user interface 
-.Rx_mac_ra			(Rx_mac_ra),
-.Rx_mac_rd			(Rx_mac_ra_r),
-.Rx_mac_data		(Rx_mac_data),
-.Rx_mac_BE			(Rx_mac_BE),
-.Rx_mac_pa			(Rx_mac_pa),
-.Rx_mac_sop			(Rx_mac_sop),
-.Rx_mac_eop			(Rx_mac_eop),
+   //USER INTERFACE
+	,.Rx_mac_ra			(		Rx_mac_ra			)
+	,.Rx_mac_rd			(		Rx_mac_ra_r			)
+	,.Rx_mac_data		(		Rx_mac_data			)
+	,.Rx_mac_BE			(		Rx_mac_BE			)
+	,.Rx_mac_pa			(		Rx_mac_pa			)
+	,.Rx_mac_sop		(		Rx_mac_sop			)
+	,.Rx_mac_eop		(		Rx_mac_eop			)
 
-                //user interface
-.Tx_mac_wa			(Tx_mac_wa),
-.Tx_mac_wr			(Tx_mac_wr),
-.Tx_mac_data		(Tx_mac_data),
-.Tx_mac_BE			(Tx_mac_BE),
-.Tx_mac_sop			(Tx_mac_sop),
-.Tx_mac_eop			(Tx_mac_eop),
+						 //user interface
+	,.Tx_mac_wa			(		Tx_mac_wa			)
+	,.Tx_mac_wr			(		Tx_mac_wr			)
+	,.Tx_mac_data		(		Tx_mac_data			)
+	,.Tx_mac_BE			(		Tx_mac_BE			)
+	,.Tx_mac_sop		(		Tx_mac_sop			)
+	,.Tx_mac_eop		(		Tx_mac_eop			)
 
-/*                //pkg_lgth fifo
-input           Pkg_lgth_fifo_rd        ,
-output          Pkg_lgth_fifo_ra        ,
-output  [15:0]  Pkg_lgth_fifo_data      ,
-*/
-                //Phy interface          
-                //Phy interface 
-					 
-.Gtx_clk        (mac_tx_clk_o),//used only in GMII mode
-.Rx_clk         (mac_rx_clk),
-.Tx_clk         (mac_tx_clk_i),//used only in MII mode
-.Tx_er          (mac_txer),
-.Tx_en          (mac_txen),
-.Txd            (mac_txd),
-.Rx_er          (1'b0),
-.Rx_dv          (dv_to_mac),
-.Rxd            (data_to_mac),
-.Crs            (1'b0),//(mac_crs),
-.Col            (mac_col),
+	//pkg_lgth fifo
+	/*input           Pkg_lgth_fifo_rd
+	output          Pkg_lgth_fifo_ra
+	output  [15:0]  Pkg_lgth_fifo_data*/
+	
+	//PHY INTERFACE 
+	,.Gtx_clk			(		mac_tx_clk_o		)//used only in GMII mode
+	,.Rx_clk				(		rgmii_rx_clk		)
+	,.Tx_clk				(		mac_tx_clk_i		)//used only in MII mode
+	,.Tx_er				(		mac_txer				)
+	,.Tx_en				(		mac_txen				)
+	,.Txd					(		mac_txd				)
+	,.Rx_er				(		1'b0					)
+	,.Rx_dv				(		dv_to_mac			)
+	,.Rxd					(		data_to_mac			)
+	,.Crs					(		1'b0					)//(mac_crs),
+	//,.Col					(		mac_col				)
+	,.Col					(		col_to_mac[2]		)
+	
 
+	//HOST INTERFACE
+	,.CSB					(		1'b1					)
+	,.WRB					(		1'b1					)
+	,.CD_in				(		16'b0					)
+	,.CD_out				(								)
+	,.CA					(		8'b0					)
+					  
+	//mdx
+	,.Mdo					(		Mdo					)   	// MII Management Data Output
+	,.MdoEn				(		MdoEn					)	   // MII Management Data Output Enable
+	,.Mdi					(		Mdi					)
+	,.Mdc					(		Mdc					)     // MII Management Data Clock       
 
-                //host interface
-.CSB				(1'b1),
-.WRB				(1'b1),
-.CD_in			(16'b0),
-.CD_out			(),
-.CA				(8'b0),
-              
-                //mdx
-.Mdo				(Mdo),               	// MII Management Data Output
-.MdoEn			(MdoEn),           		   // MII Management Data Output Enable
-.Mdi				(Mdi),
-.Mdc				(Mdc),                 	// MII Management Data Clock       
-
-//ADD BY EKADATSKII
-.btn1				(Btn3),
-.btn2				(Btn4),
-.btn3				(Btn5),
-.btn4				(Btn6),
-.rgmii_pos		(rgmii_pos),
-.rgmii_neg		(rgmii_neg),
-.rgmii_ctl_pos (rgmii_ctl_pos),
-.rgmii_ctl_neg (rgmii_ctl_neg)
-
+	//ADD BY EKADATSKII
+	,.btn1				(		Btn3					)
+	,.btn2				(		Btn4					)
+	,.btn3				(		Btn5					)
+	,.btn4				(		Btn6					)
+	,.rgmii_pos			(		rgmii_pos			)
+	,.rgmii_neg			(		rgmii_neg			)
+	,.rgmii_ctl_pos	(		rgmii_ctl_pos		)
+	,.rgmii_ctl_neg	(		rgmii_ctl_neg		)
 );
 
 assign  Mdi=Mdio;
 assign  Mdio=MdoEn?Mdo:1'bz;
 //assign mac_tx_clk_o = clk_125;
-
-
-//--------------------------------------------------------------------------------//
-//									ALTERA GMII-RGMII(not used) 									 //
-//--------------------------------------------------------------------------------//
-//ALTERA GMII TO RGMII CONVERTER
-altera_gmii_to_rgmii_adapter #(TX_PIPELINE_DEPTH, RX_PIPELINE_DEPTH, USE_ALTGPIO) altera_gmii_to_rgmii_adapter	 
-(
-
-	//CLOCKS
-    .clk					(clk),            // peri_clock
-    .rst_n				(rst_n),          // peri_reset
-
-    .pll_25m_clk		(pll_25m_clk),    // pll_25m_clock
-    .pll_2_5m_clk		(pll_2_5m_clk),   // pll_2_5m_clock
-	 
-
-    .mac_rst_tx_n  	(rst_n),					//????
-    .mac_rst_rx_n  	(rst_n),					//????					
-	 
-	 //HPS GMII	 
-	//MAC TXc
-    .mac_tx_clk_o		(mac_tx_clk_o),   // hps_gmii								  
-    .mac_txd			({mac_txd[3:0], mac_txd[7:4]}),        // hps_gmii
-    .mac_txen			(mac_txen),       // hps_gmii
-    .mac_txer			(mac_txer),       // hps_gmii
-    .mac_speed			(2'b00), 		   // hps_gmii - 10Mbit
-
-	//MAC RX
-    .mac_tx_clk_i		(mac_tx_clk_i),   // hps_gmii								
-    .mac_rx_clk		(mac_rx_clk),     // hps_gmii
-    .mac_rxdv			(mac_rxdv),       // hps_gmii
-    .mac_rxer			(mac_rxer),       // hps_gmii
-    .mac_rxd			(mac_rxd),        // hps_gmii
-    .mac_col			(mac_col),        // hps_gmii
-    .mac_crs			(mac_crs),        // hps_gmii
-
-	//PHY RX
-	 .rgmii_rx_clk		(rgmii_rx_clk),   // rgmii
-    .rgmii_rxd			(rgmii_rxd),      // rgmii
-    .rgmii_rx_ctl		(rgmii_rx_ctl),   // rgmii
-
-	//PHY TX
-//    .rgmii_tx_clk		(alt_adap_txclk),   // rgmii
-//    .rgmii_txd			(alt_adap_txd),      // rgmii
-//    .rgmii_tx_ctl		(alt_adap_txctl),   // rgmii
-	 
-//	 .rgmii_in_4_temp_reg_out	(rgmii_in_4_temp_reg_out),
-//	 .rgmii_in_1_temp_reg_out	(rgmii_in_1_temp_reg_out),
-	 
-	 .octet_cnt (octet_cnt),
-	 .rxdv_to_mac (rxdv_to_mac),
-	 .rxdat_to_mac (rxdat_to_mac)
-);
-
-
 
 //--------------------------------------------------------------------------------//
 //										READ DATA PROCESS												 //
@@ -424,10 +372,10 @@ altera_gmii_to_rgmii_adapter #(TX_PIPELINE_DEPTH, RX_PIPELINE_DEPTH, USE_ALTGPIO
   altera_gtr_rgmii_in1 the_rgmii_in1
     (
       .aclr (),            
-      .datain (rgmii_rx_ctl),      
-      .dataout_h (rgmii_ctl_pos_w),
-      .dataout_l (rgmii_ctl_neg_w), 
-      .inclock (rgmii_rx_clk)             
+      .datain (rgmii_rx_ctl),
+      .dataout_h (rgmii_ctl_pos_w),	//rx_err
+      .dataout_l (rgmii_ctl_neg_w),	//rx_dv
+      .inclock (rgmii_rx_clk)
     );
 	 
 //DATA & DV FROM RGMII(POS/NEG)
@@ -454,7 +402,7 @@ always @(posedge rgmii_rx_clk)
 	end
 
 //DATA FROM FIFO TO MAC
-always @(posedge mac_rx_clk or negedge rst_n)
+always @(posedge rgmii_rx_clk or negedge rst_n)
 	if (!rst_n) rxdat_to_mac <= 8'b0;
 	else begin
 					rxdat_to_mac[11:8] <= rgmii_ctl_neg_r ? rxdat_to_mac[ 3:0] : 4'b0;
@@ -463,12 +411,54 @@ always @(posedge mac_rx_clk or negedge rst_n)
 		  end
 
 //DV REG
-always @(posedge mac_rx_clk or negedge rst_n)
+always @(posedge rgmii_rx_clk or negedge rst_n)
 	if (!rst_n) rxdv_to_mac <= 1'b0;
-	else rxdv_to_mac <= rgmii_ctl_neg_r;	
+	else			rxdv_to_mac <= rgmii_ctl_neg_r;
 
 //DV
 assign dv_to_mac = rxdv_to_mac;
+
+//ERR REG
+always @(posedge rgmii_rx_clk or negedge rst_n)
+	if (!rst_n) rxerr_to_mac <= 1'b0;
+	else			rxerr_to_mac <= rgmii_ctl_pos_r;
+	
+//ERR
+assign err_to_mac = rxerr_to_mac;
+
+//CRS
+always @(dv_to_mac or err_to_mac or data_to_mac)
+  begin
+		rxcrs_to_mac = 1'b0;
+		if ((dv_to_mac == 1'b1) || (dv_to_mac == 1'b0 && err_to_mac == 1'b1 && data_to_mac == 8'hFF ) || 
+											(dv_to_mac == 1'b0 && err_to_mac == 1'b1 && data_to_mac == 8'h0E ) || 
+											(dv_to_mac == 1'b0 && err_to_mac == 1'b1 && data_to_mac == 8'h0F ) || 
+											(dv_to_mac == 1'b0 && err_to_mac == 1'b1 && data_to_mac == 8'h1F ) )
+		begin
+			rxcrs_to_mac = 1'b1;   // read RGMII specification data sheet , table 4 for the conditions where CRS should go high
+		end
+  end
+
+//MAC TX EN
+always @(posedge mac_tx_clk_o or negedge rst_n)
+	if (!rst_n)	mac_txen_reg <= 4'b0;
+	else 			mac_txen_reg <= {mac_txen_reg[2:0], mac_txen};
+  
+//COL
+always @(mac_txen_reg[3] or rxcrs_to_mac or dv_to_mac)
+begin
+	rxcol_to_mac = 1'b0;
+	if ( mac_txen_reg[3] == 1'b1 & (rxcrs_to_mac == 1'b1 | dv_to_mac == 1'b1))
+	begin
+		rxcol_to_mac = 1'b1;
+	end
+end
+
+always @(posedge mac_tx_clk_o or negedge rst_n)
+	if (!rst_n)	col_to_mac <= 3'b0;
+	else 			col_to_mac <= {col_to_mac[2:0], rxcol_to_mac};
+
+ 
 
 //DATA
 assign data_to_mac = {rxdat_to_mac[7:4], rxdat_to_mac[11:8]};
@@ -485,7 +475,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	else 				Rx_mac_eop_r <= Rx_mac_eop & Rx_mac_ra;
 
 //READ DATA LINK LAYER(AFTER MAC)
-//--------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 data_layer data_layer
 (
 	.clk					(	pll_62_5m_clk	)
@@ -652,7 +642,7 @@ assign User_led3 = !crc_err;
 
 wire	[101:0] ctrl_fifo_i = {tcp_data_len_i[15:0], tcp_flags_i[5:0], tcp_window_i[15:0], tcp_seq_num_i[31:0], tcp_ack_num_i[31:0]};
 
-assign tcp_data_len_i = nl_up_data_len - (tcp_head_len_i*4); 
+assign tcp_data_len_i = nl_up_data_len - (tcp_head_len_i*4);// - (nl_header_len*4); 
 
 umio_fifo #(16, 102) fifo_ctrl
 (
@@ -660,7 +650,7 @@ umio_fifo #(16, 102) fifo_ctrl
 	,.clk						(	pll_62_5m_clk		)
 	,.rd_data				(	ctrl_fifo_o			)
 	,.wr_data				(	ctrl_fifo_i			)
-	,.rd_en					(	tcp_op_rcv_rd_o	)
+	,.rd_en					(	tcp_new_pckt_rd_o	)
 	,.wr_en					(	nl_up_op_end & !fifo_ctrl_full )
 	,.full					(	fifo_ctrl_full		)
 	,.empty					(	fifo_ctrl_empty	)
@@ -673,7 +663,8 @@ wire	[15:0]		tcp_window_ii		= ctrl_fifo_o[79:64];
 wire	[31:0]		tcp_seq_num_ii		= ctrl_fifo_o[63:32];
 wire	[31:0]		tcp_ack_num_ii 	= ctrl_fifo_o[31:0];
 
-wire					tcp_op_rcv_rd_o;
+wire					tcp_new_pckt_rd_o;
+wire					tcp_new_pckt_rcv_o;
 wire					fifo_ctrl_full;
 wire					fifo_ctrl_empty;
 wire					packet_drop;
@@ -694,6 +685,8 @@ assign packet_drop = (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i != packet_n
 //										TCP CONTROLLER													 //
 //--------------------------------------------------------------------------------//
 localparam RESEND_TIME = 32'd200_000_000;
+wire	[31:0]	rcv_ack_num_o;
+wire	[ 5:0]	rcv_flags_o;
 
 tcp_controller	#(WRAM_NUM) tcp_controller
 (
@@ -710,10 +703,14 @@ tcp_controller	#(WRAM_NUM) tcp_controller
 	,.tcp_options_i			(										)
 	,.tcp_data_len_i			(		tcp_data_len_ii			)
 	,.tcp_window_i				(		tcp_window_ii				)
-	,.tcp_op_rcv_rd_o			(		tcp_op_rcv_rd_o			)
+	,.tcp_new_pckt_rd_o		(		tcp_new_pckt_rd_o			)
 	
 	,.ram_dat_len_i			(		wram_rdat_len				)
 	,.resend_time_i			(		RESEND_TIME					)
+	
+	,.rcv_ack_num_o			(		rcv_ack_num_o				)
+	,.rcv_flags_o				(		rcv_flags_o					)
+	,.tcp_new_pckt_rcv_o		(		tcp_new_pckt_rcv_o		)
 	
 
 	//OUTPUT PARAMETERS TO SEND TCP PACKET
@@ -1063,16 +1060,16 @@ generate
 				,.rst_n								(		rst_n									)
 	
 				//INPUT DATA																	
-				,.tcp_rcv_eop_i					(		tcp_op_rcv_rd_o					)
-				,.tcp_fin_flag_i					(		tcp_flags_ii[0]					)
-				,.tcp_rcv_rst_flag_i				(		tcp_flags_ii[2]					)
-				,.tcp_rcv_ack_flag_i				(		tcp_flags_ii[4]					)
-				,.tcp_rcv_ack_num_i				(		tcp_ack_num_ii						)		
+				,.tcp_rcv_eop_i					(		tcp_new_pckt_rcv_o				)
+				,.tcp_fin_flag_i					(		rcv_flags_o[0]						)
+				,.tcp_rcv_rst_flag_i				(		rcv_flags_o[2]						)
+				,.tcp_rcv_ack_flag_i				(		rcv_flags_o[4]						)
+				,.tcp_rcv_ack_num_i				(		rcv_ack_num_o						)		
 				,.tcp_seq_num_next_i				(		tcp_seq_num_next					)
 	
 				,.controller_work_st_i			(		tcp_state_estblsh_o				)
 				,.seq_num_i							(		tcp_seq_num_o						)
-				,.mem_time_i						(		MEMORY_TIME							)
+				,.mem_time_i						(		MEMORY_TIME							)				
 	
 				//INPUT DATA FROM DATA GENERATOR OR WORK DATA
 				,.wdat_i								(		gen_data								)
