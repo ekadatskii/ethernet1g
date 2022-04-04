@@ -454,6 +454,7 @@ begin
 	end
 end
 
+//COL to MAC(used bit 2)
 always @(posedge mac_tx_clk_o or negedge rst_n)
 	if (!rst_n)	col_to_mac <= 3'b0;
 	else 			col_to_mac <= {col_to_mac[2:0], rxcol_to_mac};
