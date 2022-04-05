@@ -1048,7 +1048,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									MEMORY GEN 											  //
 //---------------------------------------------------------------------//
-localparam				WRAM_NUM = 16;
+localparam				WRAM_NUM = 8;
 localparam	[31:0]	MEMORY_TIME = 32'd200_000_000;
 
 genvar mem_gen;
@@ -1373,8 +1373,8 @@ always @(posedge mac_tx_clk_45_shift or negedge rst_n)
   altdio_out4 altdio_out4
     (
       .aclr (),
-      .datain_h (iobuf_dat_h),
-      .datain_l (iobuf_dat_l),
+      .datain_h (mac_txd_rr[3:0]),
+      .datain_l (mac_txd_rr[7:4]),
       .outclock (mac_tx_clk_45_shift),
       .dataout  (rgmii_out4)
     );
