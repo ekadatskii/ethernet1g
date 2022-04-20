@@ -6,3 +6,11 @@
 	<version>Version 17.1.0 Build 590 10/25/2017 SJ Standard Edition</version>
 </internal_error>
 
+<internal_error>
+	<executable>quartus_fit.exe</executable>
+	<sub_system>MEM</sub_system>
+	<error>*** Fatal Error: Out of memory in module quartus_fit.exe (5531 megabytes used)</error>
+	<date>Mon Apr 04 16:09:53 2022</date>
+	<version>Version 17.1.0 Build 590 10/25/2017 SJ Standard Edition</version>
+</internal_error>
+

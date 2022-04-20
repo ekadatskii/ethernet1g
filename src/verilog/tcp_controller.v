@@ -1,4 +1,4 @@
-module tcp_controller #(parameter MEMORY_NUM)
+module tcp_controller #(parameter MEMORY_NUM, parameter LOCAL_PORT)
 (
 	input						clk
 	,input					rst_n
@@ -57,10 +57,6 @@ module tcp_controller #(parameter MEMORY_NUM)
 	
 );
 
-localparam			TCP_DATA_LENGTH_IN_BYTE = 16'd1450;
-
-localparam [15:0]	LOCAL_PORT					= 16'hF718; //63256
-
 localparam			STATE_LISTEN		= 7'b000_0001;
 localparam			STATE_SYN_RCVD		= 7'b000_0010;
 localparam			STATE_ESTABLISHED	= 7'b000_0100;
@@ -103,6 +99,8 @@ reg	[31:0]	new_ack_num_r;
 reg	[15:0]	new_data_len_r;
 reg	[ 5:0]	new_flags_r;
 reg	[15:0]	new_window_r;
+reg	[15:0]	new_src_port_r;
+reg	[15:0]	new_dst_port_r;
 
 
 //TCP FLAGS
@@ -122,6 +120,7 @@ wire				fin_rcv;
 wire				fin_ack_rcv;
 wire				rst_rcv;
 wire				push_rcv;
+wire				port_hit;
 
 wire	[31:0]	tcp_ack_num_diff;
 wire				time_out_pas;
@@ -151,18 +150,21 @@ reg	[31:0]	test3_o_r;
 reg	[31:0]	test4_o_r;
 reg	[31:0]	test5_o_r;*/
 
-
 //----------------------------------------------------------------------------------------------//
 //									INTERMEDIATE BUFFER BETWEEN FIFO AND CONTROLLER							   //
 //----------------------------------------------------------------------------------------------//
 //READ NEW DATA
-assign new_data_rd_w	= 	tcp_op_rcv_i & !new_data_rdy_r &	((state == STATE_LISTEN)			| 
+assign new_data_rd_w	= 	(tcp_op_rcv_i & !new_data_rdy_r &((state == STATE_LISTEN)			| 
 																			 (state == STATE_SYN_RCVD) 		| 
 																			 (state == STATE_CLOSE_WAIT)		| 
 																			 (state == STATE_LAST_ACK) 		| 
 																			 (state == STATE_CLOSED)			|
-																			 (state == STATE_ESTABLISHED))	|			
-								tcp_op_rcv_i & next_pckt_hit_w & !tcp_flags_i[2] & !tcp_flags_i[1] & !tcp_flags_i[0] & !new_flags_r[2] & !new_flags_r[1] & !new_flags_r[0] & (!tcp_flags_i[3] & new_flags_r[3]) & (state == STATE_ESTABLISHED);
+																			 (state == STATE_ESTABLISHED)))	|
+																			 
+(tcp_op_rcv_i & next_pckt_hit_w & (state == STATE_ESTABLISHED) & port_hit & !((new_data_len_r != 0) & (tcp_data_len_i == 0)) &
+														 !tcp_flags_i[2] & !tcp_flags_i[1] & !tcp_flags_i[0] & 
+														 !new_flags_r[2] & !new_flags_r[1] & !new_flags_r[0]
+														 );
 
 //NEW DATA READY FLAG
 always @(posedge clk or negedge rst_n)
@@ -174,11 +176,13 @@ always @(posedge clk or negedge rst_n)
 															 (state == STATE_CLOSE_WAIT)	| 
 															 (state == STATE_LAST_ACK) 	| 
 															 (state == STATE_CLOSED)		|
-															 (state == STATE_ESTABLISHED)))	
+															 ((state == STATE_ESTABLISHED) & port_hit) |
+															 ((state == STATE_ESTABLISHED) & tcp_flags_i[1])
+															 ))	
 													new_data_rdy_r <= 1'b1;
 													
-	//READ NEW DATA IF PUSH + ACK OR ACK FLAGS HIT and SEQ_NUM BELONGS TO THE NEXT PACKET(only ESTABLISHED state)
-	else if (tcp_op_rcv_i & !tcp_flags_i[2] & !tcp_flags_i[1] & !tcp_flags_i[0] & !new_flags_r[2] & !new_flags_r[1] & !new_flags_r[0] & (!tcp_flags_i[3] & new_flags_r[3]) & next_pckt_hit_w & (state == STATE_ESTABLISHED))
+	//READ NEW DATA IF ACK FLAG HIT and SEQ_NUM BELONGS TO THE NEXT PACKET and DATA_LEN not changed or become not NULL(only ESTABLISHED state) 
+	else if (tcp_op_rcv_i & !tcp_flags_i[2] & !tcp_flags_i[1] & !tcp_flags_i[0] & !new_flags_r[2] & !new_flags_r[1] & !new_flags_r[0] & next_pckt_hit_w & !((new_data_len_r != 0) & (tcp_data_len_i == 0)) & (state == STATE_ESTABLISHED) & port_hit)
 													new_data_rdy_r <= 1'b1;
 	//CLEAR WHEN DATA USED(NOT CLEAR IF NEW RIGHT DATA OR ACK IN ESTABLISHED STATE RECEIVED)
 	else if (tcp_op_rcv_rd_r)
@@ -189,41 +193,59 @@ assign next_seq_num_w	= (new_seq_num_r + new_data_len_r);
 							
 //NEXT PACKET SEQUENCE NUMBER HIT						
 assign next_pckt_hit_w	= (next_seq_num_w == tcp_seq_num_i);
+
+//PORT HIT
+assign port_hit = (tcp_src_port_r == tcp_source_port_i);
 				
 //NEW DATA LENGTH
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_data_len_r <= 0;
-	//else if ((state == STATE_ESTABLISHED) & next_pckt_hit_w & new_data_rd_w)	new_data_len_r <= tcp_data_len_i;
-	//else if ((state != STATE_ESTABLISHED) & new_data_rd_w)							new_data_len_r <= tcp_data_len_i;
-	else if (new_data_rd_w)	new_data_len_r <= tcp_data_len_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_data_len_r <= tcp_data_len_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_data_len_r <= tcp_data_len_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_data_len_r <= tcp_data_len_i;
 	
 //NEW DATA FLAGs
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_flags_r <= 0;
-	//else if ((state == STATE_ESTABLISHED) & next_pckt_hit_w & new_data_rd_w)	new_flags_r <= tcp_flags_i;
-	//else if ((state != STATE_ESTABLISHED) & new_data_rd_w)							new_flags_r <= tcp_flags_i;
-	else if (new_data_rd_w)	new_flags_r <= tcp_flags_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_flags_r <= tcp_flags_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_flags_r <= tcp_flags_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_flags_r <= tcp_flags_i;
 
 //NEW DATA SEQUENCE NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_seq_num_r <= 0;
-	//else if ((state == STATE_ESTABLISHED) & next_pckt_hit_w & new_data_rd_w)	new_seq_num_r <= tcp_seq_num_i;
-	//else if ((state != STATE_ESTABLISHED) & new_data_rd_w)							new_seq_num_r <= tcp_seq_num_i;
-	else if (new_data_rd_w)	new_seq_num_r <= tcp_seq_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_seq_num_r <= tcp_seq_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_seq_num_r <= tcp_seq_num_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_seq_num_r <= tcp_seq_num_i;
 
 //NEW DATA ACKNOWLEDGE NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_ack_num_r <= 0;
-	//else if ((state == STATE_ESTABLISHED) & next_pckt_hit_w & new_data_rd_w)	new_ack_num_r <= tcp_ack_num_i;
-	//else if ((state != STATE_ESTABLISHED) & new_data_rd_w)							new_ack_num_r <= tcp_ack_num_i;
-	else if (new_data_rd_w)	new_ack_num_r <= tcp_ack_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_ack_num_r <= tcp_ack_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_ack_num_r <= tcp_ack_num_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_ack_num_r <= tcp_ack_num_i;
 	
 //NEW DATA WINDOW
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_window_r <= 0;
-	//else if ((state == STATE_ESTABLISHED) & next_pckt_hit_w & new_data_rd_w)	new_window_r <= tcp_window_i;
-	//else if ((state != STATE_ESTABLISHED) & new_data_rd_w)							new_window_r <= tcp_window_i;
-	else if (new_data_rd_w)	new_window_r <= tcp_window_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_window_r <= tcp_window_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_window_r <= tcp_window_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_window_r <= tcp_window_i;
+	
+//NEW SOURCE PORT
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)					new_src_port_r <= 0;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_src_port_r <= tcp_source_port_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_src_port_r <= tcp_source_port_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_src_port_r <= tcp_source_port_i;
+	
+//NEW DEST PORT
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)					new_dst_port_r <= 0;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_dst_port_r <= tcp_dest_port_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_dst_port_r <= tcp_dest_port_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_dst_port_r <= tcp_dest_port_i;
+
 													
 //----------------------------------------------------------------------//
 //									CONTROLLER MAIN									   //
@@ -279,7 +301,8 @@ always @(posedge clk or negedge rst_n)
 					//----------------------	
 					STATE_ESTABLISHED:
 						begin
-							if (rst_rcv & (tcp_src_port_r == tcp_source_port_i))		state <= STATE_CLOSED;				
+							if (rst_rcv)		state <= STATE_CLOSED;
+							else if (syn_rcv)	state <= STATE_CLOSED;
 							else if (fin_rcv)	state <= STATE_CLOSE_WAIT;
 						end
 					//----------------------
@@ -294,6 +317,7 @@ always @(posedge clk or negedge rst_n)
 						begin
 							if (rst_rcv)		state <= STATE_CLOSED;
 							else if (ack_rcv)	state <= STATE_CLOSED;
+							else if (syn_rcv)	state <= STATE_CLOSED;
 						end
 						
 					//----------------------
@@ -332,19 +356,19 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												ack_start <= 1'b0;
 	else if (ack_start)									ack_start <= 1'b0;
-	else if (push_rcv & ack_rcv & !fin_rcv & !rst_rcv /*& (new_data_len_r != 0)*/ & (state == STATE_ESTABLISHED))
+	else if (ack_rcv & !fin_rcv & !rst_rcv & (new_data_len_r != 0) & (state == STATE_ESTABLISHED))
 																ack_start <= 1'b1;
-	else if (push_rcv & ack_rcv & !fin_rcv & !rst_rcv & mem_old_dat_flg & !time_out_pas_w & (state == STATE_ESTABLISHED))
+	else if (ack_rcv & !fin_rcv & !rst_rcv & mem_old_dat_flg & !time_out_pas_w & (state == STATE_ESTABLISHED))
 																ack_start <= 1'b1;
-	else if (push_rcv & ack_rcv & !fin_rcv & !rst_rcv & !mem_old_dat_flg & mem_old_dat_any_flg & (state == STATE_ESTABLISHED))
+	else if (ack_rcv & !fin_rcv & !rst_rcv & !mem_old_dat_flg & mem_old_dat_any_flg & (state == STATE_ESTABLISHED))
 																ack_start <= 1'b1;																
 
 //START RESET SEND
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												rst_start <= 1'b0;
 	else if (rst_start)									rst_start <= 1'b0;
-	else if (ack_rcv & (state == STATE_LISTEN))
-																rst_start <= 1'b1;
+/*	else if (ack_rcv & (state == STATE_LISTEN))
+																rst_start <= 1'b1;*/
 	else if (new_data_rdy_r & tcp_op_rcv_rd_r & !rst_rcv & (state == STATE_CLOSED))
 																rst_start <= 1'b1;											
 
@@ -396,7 +420,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_src_port_r <= 0;
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))
-																tcp_src_port_r <= tcp_source_port_i;																
+																tcp_src_port_r <= new_src_port_r;																
 	
 //INPUT ACKNOWLEDGEMENT NUMBER
 /*

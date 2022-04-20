@@ -39,11 +39,6 @@ module ethernet_1g
 		,output				User_led3	
 );
 
-//ALTERA GMII TO RGMII CONVERTER PARAMETERS
-parameter TX_PIPELINE_DEPTH = 0;
-parameter RX_PIPELINE_DEPTH = 0;
-parameter USE_ALTGPIO = 0;
-
 reg [2:0]	rst_rr;
 
 reg [11:0]	rxdat_to_mac;
@@ -602,7 +597,6 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)							increment_data <= 16'b0;
 	else if (udp_data_cnt == 8'd3)increment_data <= udp_upper_data[31:16];	
 
-
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 						increment_cnt <= 16'b0;
 	else if (udp_upper_op_end)		increment_cnt <= increment_cnt + 1'b1;
@@ -614,6 +608,77 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 																	crc_err <= 1'b0;
 	else if (udp_upper_op_end & (udp_crc_sum != 16'hFFFF))			crc_err <= 1'b1;
+	
+//----------------------------------------------------
+//2 PORTS RAM WIDTH 32 DEPTH 512 CAPACITY 2048 BYTES					TODO (TRY 4096)
+reg	[ 8:0]	tcp_ram_rd_addr_r;
+reg	[ 8:0]	tcp_ram_wr_addr_r;
+reg	[ 8:0]	tcp_ram_wr_addr_checked_r;
+
+wire 				tcp_ram_wr;
+wire 				tcp_ram_rd;
+wire	[ 8:0]	tcp_ram_rd_addr;
+wire	[ 8:0]	tcp_ram_wr_addr;
+wire	[31:0]	tcp_ram_data;
+
+//WRITE TO TCP RAM(ESTABLISH + PUSH FLAG + RIGHT PORTS + FIXED DATA LENGTH)
+assign tcp_ram_wr	= tcp_state_estblsh_o & udp_upper_op & (tcp_dest_port_i == LOCAL_PORT) & (tcp_source_port_i == tcp_dest_port_o);
+
+//WRITE TO TCP RAM ADDRESS
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)
+					tcp_ram_wr_addr_r <= 0;
+	else if (udp_upper_op_end & tcp_ram_wr & (udp_crc_sum != 16'hFFFF))
+					tcp_ram_wr_addr_r <= tcp_ram_wr_addr_checked_r;
+	else if (tcp_ram_wr)
+					tcp_ram_wr_addr_r <= tcp_ram_wr_addr_r + 1'b1;
+
+//WRITE TO TCP RAM CHECKED DATA
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)
+					tcp_ram_wr_addr_checked_r <= 0;
+	else if (udp_upper_op_end & tcp_ram_wr & (udp_crc_sum == 16'hFFFF))
+					tcp_ram_wr_addr_checked_r <= tcp_ram_wr_addr_r + 1'b1;
+					
+assign tcp_ram_wr_addr = tcp_ram_wr_addr_r;
+
+//READ OPERATIONS
+//----------------------------------------------------
+//READ FROM RAM SIGNAL(RD)
+assign tcp_ram_rd = tcp_ram_rd_addr_r != tcp_ram_wr_addr_checked_r;
+
+//RAM READ ADDRESS
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)
+					tcp_ram_rd_addr_r <= 0;
+	else if (tcp_ram_rd)
+					tcp_ram_rd_addr_r <= tcp_ram_rd_addr_r + 1'b1;
+					
+assign tcp_ram_rd_addr = tcp_ram_rd_addr_r + tcp_ram_rd;
+
+ram2048	tcp_ram_0
+(
+	.clock 					( pll_62_5m_clk			)
+	,.data 					( udp_upper_data			)
+	,.rdaddress				( tcp_ram_rd_addr			)
+	,.wraddress				( tcp_ram_wr_addr			)
+	,.wren					( tcp_ram_wr				)
+	,.q						( tcp_ram_data				)
+);
+	
+	
+	
+//tcp_new_pckt_rcv_o - пакет принят
+//нужна будет проверка на то, повторяется ли пакет или нет.
+
+usb_prot_decoder usb_prot_decoder (
+	.clk						(	pll_62_5m_clk			)
+	,.rst_n					(	rst_n						)
+	
+	,.op_i					(	tcp_ram_rd				)//Operation active
+	,.op_dat_i				(	tcp_ram_data			)//Operation data	
+);
+
 	
 	
 //--------------------------------------------------------------------------------//
@@ -641,28 +706,31 @@ assign User_led3 = !crc_err;
 //--------------------------------------------------------------------------------//
 //FIFO for control signals collection
 
-wire	[101:0] ctrl_fifo_i = {tcp_data_len_i[15:0], tcp_flags_i[5:0], tcp_window_i[15:0], tcp_seq_num_i[31:0], tcp_ack_num_i[31:0]};
+wire				ctrl_fifo_wr = nl_up_op_end & !fifo_ctrl_full & (tcp_dest_port_i == LOCAL_PORT);
+wire	[133:0]	ctrl_fifo_i = {tcp_dest_port_i, tcp_source_port_i, tcp_data_len_i[15:0], tcp_flags_i[5:0], tcp_window_i[15:0], tcp_seq_num_i[31:0], tcp_ack_num_i[31:0]};
 
 assign tcp_data_len_i = nl_up_data_len - (tcp_head_len_i*4);// - (nl_header_len*4); 
 
-umio_fifo #(16, 102) fifo_ctrl
+umio_fifo #(16, 134) fifo_ctrl
 (
 	.rst_n					(	rst_n					)
 	,.clk						(	pll_62_5m_clk		)
 	,.rd_data				(	ctrl_fifo_o			)
 	,.wr_data				(	ctrl_fifo_i			)
 	,.rd_en					(	tcp_new_pckt_rd_o	)
-	,.wr_en					(	nl_up_op_end & !fifo_ctrl_full )
+	,.wr_en					(	ctrl_fifo_wr		)
 	,.full					(	fifo_ctrl_full		)
 	,.empty					(	fifo_ctrl_empty	)
 );
 
-wire	[101:0]		ctrl_fifo_o;
-wire	[15:0]		tcp_data_len_ii	= ctrl_fifo_o[101:86]; 
-wire	[ 5:0]		tcp_flags_ii		= ctrl_fifo_o[85:80];
-wire	[15:0]		tcp_window_ii		= ctrl_fifo_o[79:64];
-wire	[31:0]		tcp_seq_num_ii		= ctrl_fifo_o[63:32];
-wire	[31:0]		tcp_ack_num_ii 	= ctrl_fifo_o[31:0];
+wire	[133:0]		ctrl_fifo_o;
+wire	[15:0]		tcp_dest_port_ii		= ctrl_fifo_o[133:118];
+wire	[15:0]		tcp_source_port_ii	= ctrl_fifo_o[117:102]; 	
+wire	[15:0]		tcp_data_len_ii		= ctrl_fifo_o[101:86]; 
+wire	[ 5:0]		tcp_flags_ii			= ctrl_fifo_o[85:80];
+wire	[15:0]		tcp_window_ii			= ctrl_fifo_o[79:64];
+wire	[31:0]		tcp_seq_num_ii			= ctrl_fifo_o[63:32];
+wire	[31:0]		tcp_ack_num_ii 		= ctrl_fifo_o[31:0];
 
 wire					tcp_new_pckt_rd_o;
 wire					tcp_new_pckt_rcv_o;
@@ -685,11 +753,12 @@ assign packet_drop = (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i != packet_n
 //--------------------------------------------------------------------------------//
 //										TCP CONTROLLER													 //
 //--------------------------------------------------------------------------------//
-localparam RESEND_TIME = 32'd200_000_000;
-wire	[31:0]	rcv_ack_num_o;
-wire	[ 5:0]	rcv_flags_o;
+parameter	[15:0]	LOCAL_PORT	= 16'd63256;
+parameter 				RESEND_TIME = 32'd200_000_000;
+wire			[31:0]	rcv_ack_num_o;
+wire			[ 5:0]	rcv_flags_o;
 
-tcp_controller	#(WRAM_NUM) tcp_controller
+tcp_controller	#(WRAM_NUM, LOCAL_PORT) tcp_controller
 (
 	.clk							(		pll_62_5m_clk				)
 	,.rst_n						(		rst_n							)
@@ -752,7 +821,7 @@ wire	[15:0]		ip_total_len		= 16'd20/*ip length*/ + (tcp_head_len_o*16'd4)/*udp h
 wire	[15:0]		ip_id					= 16'h64_D7;		//25815
 wire	[ 2:0]		ip_flag				= 3'h0;
 wire	[13:0]		ip_frag_offset		= 13'h00_00;		
-wire	[ 7:0]		ip_ttl				= 8'h80;				//128
+wire	[ 7:0]		ip_ttl				= 8'h80;				//TODO CHANGE TO IF NEED 128
 wire	[ 7:0]		ip_prot				= 8'h06;				//TCP
 //wire	[15:0]		ip_head_chksum		= 16'h00_00;
 wire	[31:0]		ip_src_addr			= 32'hC1_E8_1A_4E; //193.232.26.78 //= 32'hA9_FE_CE_77;		//169.254.206.119
@@ -760,8 +829,6 @@ wire	[31:0]		ip_src_addr			= 32'hC1_E8_1A_4E; //193.232.26.78 //= 32'hA9_FE_CE_7
 wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_4F;//DENIS//32'hC1_E8_1A_64;
 wire	[31:0]		ip_options			= 32'h00_00_00_00;		//Not used now
 	
-wire	[15:0]		udp_src_port		= 16'hF718;			//63256
-wire	[15:0]		udp_dst_port		= 16'h1EA5;			//16'h1389;			//5001	
 wire	[15:0]		tcp_source_port_i;
 wire	[15:0]		tcp_source_port_o;
 wire	[15:0]		tcp_dest_port_i;
@@ -860,6 +927,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									DATA GENERATOR 									  //
 //---------------------------------------------------------------------//
+parameter		GEN_DATA_ON = 0;
 reg	[31:0]	timer_reg_r;
 wire				timer_pas2;
 
@@ -867,7 +935,7 @@ wire				timer_pas2;
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)													
 					timer_reg_r <= 32'd210_000_000;
-	else if (!timer_pas2)									
+	else if (!timer_pas2 & GEN_DATA_ON)									
 					timer_reg_r <= timer_reg_r - 1'b1;
 	
 assign timer_pas2 = timer_reg_r == 0;
@@ -996,6 +1064,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //									CRC-ERR GENERATOR 								  //
 //---------------------------------------------------------------------//
 parameter		CRC_ERR_NUM = 1_000_000;
+parameter		CRC_ERR_ON	= 1;
 reg	[31:0]	crc_err_num;
 
 reg				crc_err_gen;
@@ -1016,9 +1085,9 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 assign crc_err_gen_chkr_pas = crc_err_gen_chkr == 0;
 
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)													crc_err_gen <= 1'b0;
-	else if (udp_eop)											crc_err_gen <= 1'b0;
-	else if (wdat_start_o & crc_err_gen_chkr_pas)	crc_err_gen <= 1'b1;
+	if (!rst_n)																	crc_err_gen <= 1'b0;
+	else if (udp_eop)															crc_err_gen <= 1'b0;
+	else if (wdat_start_o & crc_err_gen_chkr_pas & CRC_ERR_ON)	crc_err_gen <= 1'b1;					
 	
 
 //---------------------------------------------------------------------//
@@ -1048,7 +1117,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									MEMORY GEN 											  //
 //---------------------------------------------------------------------//
-localparam				WRAM_NUM = 8;
+localparam				WRAM_NUM = 4;
 localparam	[31:0]	MEMORY_TIME = 32'd200_000_000;
 
 genvar mem_gen;
