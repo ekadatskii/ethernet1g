@@ -4,12 +4,13 @@ module usb_prot_decoder (
 	
 	,input					op_i			//Operation active
 	,input	[31:0]		op_dat_i		//Operation data
+	,input	[15:0]		op_len_i
+	
 	,output					dat_en_o
 	,output	[31:0]		dat_o
 	,output	[15:0]		dat_len_o
-	,output	[ 1:0]		dat_be_o
+	,output	[ 2:0]		dat_be_o
 	,output					dat_crc_chk_o
-	,output					dat_crc_true_o
 	
 	,output	[1:0]			test_o
 );
@@ -17,12 +18,9 @@ module usb_prot_decoder (
 reg					rcv_run_r1;
 reg					rcv_run_r2;
 reg					rcv_run_r3;
-reg					rcv_run_r4;
-reg					rcv_run_r5;
 reg					data_run;
 reg	[(4*8)-1:0]	dat_in_r1;
 reg	[(4*8)-1:0]	dat_in_r2;
-reg	[(4*8)-1:0]	dat_in_r3;
 reg	[(4*8)-1:0]	header_r;
 reg	[2:0]			header_cnt;
 reg					header_fix;
@@ -35,6 +33,7 @@ reg					crc_check_en;
 reg					dat_crc_chk;
 
 reg					flag_5E;
+reg					flag_5E_r;
 reg					flag_5E4D;
 reg					flag_5E4D_r;
 reg	[1:0]			flag_5E4D_ptr;
@@ -69,15 +68,6 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)				rcv_run_r3 <= 1'b0;
 	else 						rcv_run_r3 <= rcv_run_r2;
-//DATA RCV RUN REG 4										
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)				rcv_run_r4 <= 1'b0;
-	else 						rcv_run_r4 <= rcv_run_r3;
-//DATA RCV RUN REG 5										
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)				rcv_run_r5 <= 1'b0;
-	else 						rcv_run_r5 <= rcv_run_r4;
-
 
 //DATA IN REG 1
 always @(posedge clk or negedge rst_n)
@@ -87,19 +77,22 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)				dat_in_r2 <= {(4*8){1'b0}};
 	else if (rcv_run_r1)	dat_in_r2 <= dat_in_r1;
-//DATA IN REG 3	
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)				dat_in_r3 <= {(4*8){1'b0}};
-	else if (rcv_run_r2)	dat_in_r3 <= dat_in_r2;
-	
+
 //TODO NEED CLR FLAG
 
-//5E CHECK FLAG
+//5E CHECK FLAG(WIRE)
 //ONLY BYTE 0 CHECK |XX|XX|XX|5E|
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)				flag_5E <= 1'b0;
 	else if (rcv_run_r1)	flag_5E <= dat_in_r1[7:0] == 8'h5E;
 	else						flag_5E <= 1'b0;
+	
+//5E CHECK FLAG REG
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)											flag_5E_r <= 1'b0;
+	else if (trsmt_cmplt)							flag_5E_r <= 1'b0;
+	else if (header_fix & !header_crc_true)	flag_5E_r <= 1'b0;
+	else if (flag_5E)									flag_5E_r <= 1'b1;
 
 //5E4D CHECK(WIRE)
 always @*
@@ -121,31 +114,18 @@ always @(posedge clk or negedge rst_n)
 	else if (header_fix & !header_crc_true)	flag_5E4D_r <= 1'b0;
 	else if (flag_5E4D)								flag_5E4D_r <= 1'b1;
 
-//5E4D CHECK FLAG
-/*integer i;
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)																flag_5E4D <= 1'b0;
-	else if (trsmt_cmplt)												flag_5E4D <= 1'b0;
-	else if (header_fix & !header_crc_true)						flag_5E4D <= 1'b0;
-	
-	else if (flag_5E & !flag_5E4D & rcv_run_r1 & (dat_in_r1[31:24] == 8'h4D))
-																				flag_5E4D <= 1'b1;
-	else if (rcv_run_r1 & !flag_5E4D)
-		for (i = 0; i < 3; i = i + 1)
-				if (dat_in_r1[(8*i) +: 16] == 16'h5E4D)			flag_5E4D <= 1'b1;*/
-
 //5E4D PTR
 always @*
 begin: PTR_5E4D
 	integer j;
 	flag_5E4D_ptr = 0;
+	
 	if (flag_5E & rcv_run_r1 & (dat_in_r1[31:24] == 8'h4D))
-																				flag_5E4D_ptr = 3;
+															flag_5E4D_ptr = 3;
 	else if (rcv_run_r1 & flag_5E4D)
 		for (j = 0; j < 3; j = j + 1)
-				if (dat_in_r1[(8*j) +: 16] == 16'h5E4D)			flag_5E4D_ptr = j;
-	else
-																				flag_5E4D_ptr = 0;
+				if (dat_in_r1[(8*j) +: 16] == 16'h5E4D)			
+															flag_5E4D_ptr = j;
 end
 	
 always @(posedge clk or negedge rst_n)
@@ -153,18 +133,6 @@ always @(posedge clk or negedge rst_n)
 	else if (trsmt_cmplt)												flag_5E4D_ptr_r <= 0;
 	else if (header_fix & !header_crc_true)						flag_5E4D_ptr_r <= 0;
 	else if (flag_5E4D)													flag_5E4D_ptr_r <= flag_5E4D_ptr;
-				
-				
-/*always @(posedge clk or negedge rst_n)
-	if (!rst_n)																flag_5E4D_ptr <= 0;
-	else if (trsmt_cmplt)												flag_5E4D_ptr <= 0;
-	else if (header_fix & !header_crc_true)						flag_5E4D_ptr <= 0;
-																	
-	else if (flag_5E & !flag_5E4D & rcv_run_r1 & (dat_in_r1[31:24] == 8'h4D))
-																				flag_5E4D_ptr <= 3;
-	else if (rcv_run_r1 & !flag_5E4D)
-		for (j = 0; j < 3; j = j + 1)
-				if (dat_in_r1[(8*j) +: 16] == 16'h5E4D)			flag_5E4D_ptr <= j;*/
 
 //USB HEADER GRUB
 always @(posedge clk or negedge rst_n)
@@ -276,18 +244,15 @@ always @(posedge clk or negedge rst_n)
 	else if (trsmt_cmplt)															data_cnt <= 0;
 //	else if (header_fix & header_crc_true & rcv_run_r3)					data_cnt <= data_cnt + 4;
 	else if (header_fix_r & rcv_run_r3)											data_cnt <= data_cnt + 4;
-	
+
 //LAST BYTE FLAG
 assign last_byte = header_fix_r & (data_len < data_cnt + 4);
 
 //DATA RUN SIGNAL
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)																			data_run <= 1'b0;
-	else if (data_cnt >= data_len)												data_run <= 1'b0;
-	else if (header_fix & header_crc_true & rcv_run_r3 & (data_cnt != 0))
-																							data_run <= 1'b1;
-	else if (header_fix_r & rcv_run_r3 & (data_len <= flag_5E4D_ptr_r))
-																							data_run <= 1'b1;
+	if (!rst_n)									data_run <= 1'b0;
+	else if (trsmt_cmplt)					data_run <= 1'b0;
+	else if (header_fix_r)					data_run <= rcv_run_r3;
 
 //TRANSMITION COMPLETE
 assign trsmt_cmplt = header_fix_r & (data_cnt >= data_len + 1);
@@ -296,12 +261,16 @@ assign trsmt_cmplt = header_fix_r & (data_cnt >= data_len + 1);
 
 	
 //DATA BYTE ENABLE
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)															byte_en <= 0;
-	else if (header_fix & header_crc_true & rcv_run_r2 & (data_cnt == 0))	
-																			byte_en <= 0;
-	else if (header_fix & header_crc_true & rcv_run_r2 & ((data_len - data_cnt) <= 4))							
-																			byte_en <= (data_len - data_cnt);
+always @*
+begin
+	byte_en = 0;
+	if (data_len > data_cnt) 					byte_en = 4;
+	else if ((data_cnt - data_len) == 0)	byte_en = 4;
+	else if ((data_cnt - data_len) == 1)	byte_en = 3;
+	else if ((data_cnt - data_len) == 2)	byte_en = 2;
+	else if ((data_cnt - data_len) == 3)	byte_en = 1;
+end
+	
 																			
 //DATA CRC BYTE 1
 crc8_ccitt crc8_d1
@@ -341,16 +310,23 @@ crc8_ccitt crc8_d4
 	
 //CRC REGISTER
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)				data_crc_r	 <= 0;
-	else if (data_run)	data_crc_r	 <= crc_do4;
+	if (!rst_n)					data_crc_r	 <= 0;
+	else if (trsmt_cmplt)	data_crc_r	 <= 0;
+	else if (data_run)		data_crc_r	 <= crc_do4;
+
+//DATA CRC CHECK
+assign data_crc_chk = trsmt_cmplt ?	((byte_en == 0) ? (data_crc_r == data_r[8*8-1 -: 8]) : 
+												 (byte_en == 1) ? (crc_do1 	== data_r[8*7-1 -: 8]) : 
+												 (byte_en == 2) ? (crc_do2 	== data_r[8*6-1 -: 8]) : 
+												 (byte_en == 3) ? (crc_do3 	== data_r[8*5-1 -: 8]) : 1'b0)
+												: 1'b0;
 
 //OUTPUT SIGNALS
 assign dat_en_o			= data_run;
 assign dat_o				= data_r[8*8-1 :32];
 assign dat_len_o			= data_len;
-assign dat_be_o			= 2'b0; //TODO
-assign dat_crc_true_o	= 1'b0; //TODO
-assign dat_crc_chk_o		= 1'b0;
+assign dat_be_o			= byte_en;
+assign dat_crc_chk_o		= data_crc_chk;
 assign test_o				= flag_5E4D_ptr_r;
 
 endmodule

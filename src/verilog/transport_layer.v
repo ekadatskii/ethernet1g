@@ -2,14 +2,17 @@ module transport_layer
 (
 	input					clk
 	,input				rst_n
+	,input	[31:0]	dev_ip_addr_i
 
-	,input				rcv_op_st
-	,input				rcv_op
-	,input				rcv_op_end
-	,input	[31:0]	rcv_data
-	,input	[15:0]	rcv_data_len
-	,input	[7:0]		prot_type
-	,input	[15:0]	pseudo_crc_sum
+	,input				rcv_op_st_i
+	,input				rcv_op_i
+	,input				rcv_op_end_i
+	,input	[31:0]	rcv_data_i
+	,input	[15:0]	rcv_data_len_i
+	,input	[31:0]	src_ip_addr_i
+	,input	[31:0]	dst_ip_addr_i
+	,input	[7:0]		prot_type_i
+	,input	[15:0]	pseudo_crc_sum_i
 	
 
 
@@ -68,7 +71,24 @@ wire	[31:0]	crc_sum_w;
 wire	[31:0]	crc_sum_ww;
 wire	[15:0]	crc_sum_www;
 
-assign tcp_prot = prot_type == 8'd06;
+wire				rcv_op_st;
+wire				rcv_op;
+wire				rcv_op_end;
+wire	[31:0]	rcv_data;
+wire	[15:0]	rcv_data_len;
+wire	[15:0]	pseudo_crc_sum;
+
+//PROTOCOL AND DESTINATION IP ADDRESS CHECK
+assign tcp_prot = prot_type_i == 8'd06;
+assign ip_check = dev_ip_addr_i == dst_ip_addr_i;
+
+//INPUT CONTROL SIGNALS AFTER IP ADDRESS FILTER
+assign rcv_op				= rcv_op_i 		& tcp_prot & ip_check;
+assign rcv_op_st			= rcv_op_st_i	& tcp_prot & ip_check;
+assign rcv_op_end			= rcv_op_end_i	& tcp_prot & ip_check;
+assign rcv_data			= (tcp_prot & ip_check) ? rcv_data_i 			: {32{1'b0}};
+assign rcv_data_len		= (tcp_prot & ip_check) ? rcv_data_len_i		: {16{1'b0}};
+assign pseudo_crc_sum	= (tcp_prot & ip_check) ? pseudo_crc_sum_i	: {16{1'b0}};
 
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 						word_cnt <= 16'b0;
@@ -80,65 +100,65 @@ always @(posedge clk or negedge rst_n)
 //VERSION NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												source_port <= 16'b0;
-	else if (rcv_op_st & rcv_op & tcp_prot)			source_port <= rcv_data[31:16];
+	else if (rcv_op_st & rcv_op)							source_port <= rcv_data[31:16];
 	
 //DESTINATION PORT
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												dest_port <= 16'b0;
-	else if (rcv_op_st & rcv_op & tcp_prot)			dest_port <= rcv_data[15:0];
+	else if (rcv_op_st & rcv_op)							dest_port <= rcv_data[15:0];
 	
 //PACKET LENGTH
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												packet_length <= 16'b0;
-	else if (rcv_op_st & rcv_op & tcp_prot)			packet_length <= rcv_data_len;
+	else if (rcv_op_st & rcv_op)							packet_length <= rcv_data_len;
 	
 //SEQUENCE NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												seq_num <= 32'b0;
-	else if (rcv_op & (word_cnt == 1) & tcp_prot)	seq_num <= rcv_data;
+	else if (rcv_op & (word_cnt == 1) )					seq_num <= rcv_data;
 
 //ACKNOWLEDGE NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												ack_num <= 32'b0;
-	else if (rcv_op & (word_cnt == 2) & tcp_prot)	ack_num <= rcv_data;
+	else if (rcv_op & (word_cnt == 2))					ack_num <= rcv_data;
 	
 //TCP HEADER LENGTH
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												tcp_head_len <= 4'b0;
-	else if (rcv_op & (word_cnt == 3) & tcp_prot)	tcp_head_len <= rcv_data[31:28];
+	else if (rcv_op & (word_cnt == 3))					tcp_head_len <= rcv_data[31:28];
 	
 //TCP FLAGS
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												tcp_flags <= 6'b0;
-	else if (rcv_op & (word_cnt == 3) & tcp_prot)	tcp_flags <= rcv_data[21:16];
+	else if (rcv_op & (word_cnt == 3))					tcp_flags <= rcv_data[21:16];
 	
 //TCP WINDOW
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												tcp_window <= 16'b0;
-	else if (rcv_op & (word_cnt == 3) & tcp_prot)	tcp_window <= rcv_data[15:0];
+	else if (rcv_op & (word_cnt == 3))					tcp_window <= rcv_data[15:0];
 	
 //CHECKSUM
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												checksum <= 16'b0;
-	else if (rcv_op & (word_cnt == 4) & tcp_prot)	checksum <= rcv_data[31:16];
+	else if (rcv_op & (word_cnt == 4))					checksum <= rcv_data[31:16];
 	
 //URGENT POINTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												urgent_ptr <= 16'b0;
-	else if (rcv_op & (word_cnt == 4) & tcp_prot)	urgent_ptr <= rcv_data[15:0];
+	else if (rcv_op & (word_cnt == 4))					urgent_ptr <= rcv_data[15:0];
 	
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												options_reg <= {(32*OPTIONS_SIZE){1'b0}};
 	else if (rcv_op_st & rcv_op)							options_reg <= {(32*OPTIONS_SIZE){1'b0}};
-	else if (rcv_op & (word_cnt == 5) & (word_cnt < tcp_head_len) & tcp_prot)
+	else if (rcv_op & (word_cnt == 5) & (word_cnt < tcp_head_len))
 																	options_reg[31:0] <= rcv_data;
-	else if (rcv_op & (word_cnt == 6) & (word_cnt < tcp_head_len) & tcp_prot)
+	else if (rcv_op & (word_cnt == 6) & (word_cnt < tcp_head_len))
 																	options_reg[63:32] <= rcv_data;
-	else if (rcv_op & (word_cnt == 7) & (word_cnt < tcp_head_len) & tcp_prot)
+	else if (rcv_op & (word_cnt == 7) & (word_cnt < tcp_head_len))
 																	options_reg[95:64] <= rcv_data;
-	else if (rcv_op & (word_cnt == 8) & (word_cnt < tcp_head_len) & tcp_prot)
+	else if (rcv_op & (word_cnt == 8) & (word_cnt < tcp_head_len))
 																	options_reg[127:96] <= rcv_data;
-/*	else if (rcv_op & (word_cnt >= 5) & (word_cnt < tcp_head_len) & tcp_prot)	
+/*	else if (rcv_op & (word_cnt >= 5) & (word_cnt < tcp_head_len))	
 																	options_reg[31 * (word_cnt - 4'd5) +: 32] <= rcv_data;*/
 	
 
@@ -153,7 +173,7 @@ assign crc_head_www = crc_head_ww[31:16] + crc_head_ww[15:0];
 //RECEIVE DATA
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												upper_data_r <= 32'b0;
-	else if (rcv_op & tcp_prot & (word_cnt >= 5) & (word_cnt >= tcp_head_len))	
+	else if (rcv_op & (word_cnt >= 5) & (word_cnt >= tcp_head_len))	
 																	upper_data_r <= rcv_data;
 	else 															upper_data_r <= 32'b0;
 	
@@ -161,29 +181,29 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												data_word_cnt <= 16'b0;
 	else if (rcv_op_end)										data_word_cnt <= 16'b0;
-	else if (rcv_op & tcp_prot & (word_cnt >= 5) & (word_cnt >= tcp_head_len))	
+	else if (rcv_op & (word_cnt >= 5) & (word_cnt >= tcp_head_len))	
 																	data_word_cnt <= data_word_cnt + 1'b1;
 
 //START UDP DATA
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												upper_op_start_r <= 1'b0;
 	else if (upper_op_start_r)								upper_op_start_r <= 1'b0;
-	else if (rcv_op & tcp_prot & (word_cnt == tcp_head_len) & (packet_length > (tcp_head_len * 4)))
+	else if (rcv_op & (word_cnt == tcp_head_len) & (packet_length > (tcp_head_len * 4)))
 																	upper_op_start_r <= 1'b1;
 								
 //STOP UDP DATA
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												upper_op_stop_r <= 1'b0;
 	else if (upper_op_stop_r)								upper_op_stop_r <= 1'b0;
-	else if (rcv_op_end & rcv_op & tcp_prot & (packet_length > (tcp_head_len * 4)))
+	else if (rcv_op_end & rcv_op & (packet_length > (tcp_head_len * 4)))
 																	upper_op_stop_r <= 1'b1;
 						
 //RECEIVE DATA OPERATION
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)													upper_op_r <= 1'b0;
-	else if (rcv_op & tcp_prot & (word_cnt == tcp_head_len) & (packet_length > (tcp_head_len * 4)))
+	else if (rcv_op & (word_cnt == tcp_head_len) & (packet_length > (tcp_head_len * 4)))
 																	upper_op_r <= 1'b1;
-	/*else if (rcv_op & tcp_prot & upper_op_r & (word_cnt == tcp_head_len) & (packet_length > (word_cnt << 2)))		//TODO CHECK IT
+	/*else if (rcv_op & upper_op_r & (word_cnt == tcp_head_len) & (packet_length > (word_cnt << 2)))		//TODO CHECK IT
 																	upper_op_r <= 1'b1;																
 	else 															upper_op_r <= 1'b0;*/
 	else if (upper_op_stop_r)								upper_op_r <= 1'b0;	
@@ -192,9 +212,9 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)													crc_dat_r <= 32'b0;
 	else if (rcv_op & rcv_op_st)							crc_dat_r <= 32'b0;
-	else if (rcv_op & tcp_prot & (word_cnt == 5) & (packet_length >= (tcp_head_len * 4)))
+	else if (rcv_op & (word_cnt == 5) & (packet_length >= (tcp_head_len * 4)))
 																	crc_dat_r <= crc_dat_w;
-	else if (rcv_op & tcp_prot & (word_cnt > 5) & (packet_length > (word_cnt << 2)))													//TODO CHECK IT
+	else if (rcv_op & (word_cnt > 5) & (packet_length > (word_cnt << 2)))													//TODO CHECK IT
 																	crc_dat_r <= crc_dat_w;
 	
 assign crc_dat_w = crc_dat_r + rcv_data[31:16] + rcv_data[15:0];

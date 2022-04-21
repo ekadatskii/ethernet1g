@@ -3,11 +3,12 @@ module network_layer
 (
 	input					clk
 	,input				rst_n
+	,input	[47:0]	dev_mac_addr_i
 
-	,input				rcv_op
-	,input				rcv_op_st
-	,input				rcv_op_end
-	,input	[31:0]	rcv_data
+	,input				rcv_op_i
+	,input				rcv_op_st_i
+	,input				rcv_op_end_i
+	,input	[31:0]	rcv_data_i
 	,input	[47:0]	source_addr_i
 	,input	[47:0]	dest_addr_i
 	,input	[15:0]	prot_type_i
@@ -62,6 +63,21 @@ wire	[31:0]	pseudo_crc_sum_w;
 wire	[31:0]	pseudo_crc_sum_ww;
 wire	[15:0]	pseudo_crc_sum_www;
 wire				upper_op_run_w;
+
+wire				rcv_op;
+wire				rcv_op_st;
+wire				rcv_op_end;
+wire	[31:0]	rcv_data;
+wire				mac_check;
+
+//DESTINATION MAC ADDRESS CHECK
+assign mac_check	= dest_addr_i == dev_mac_addr_i;
+
+//INPUT CONTROL SIGNALS AFTER MAC ADDRESS FILTER
+assign rcv_op		= rcv_op_i 		& mac_check;
+assign rcv_op_st	= rcv_op_st_i	& mac_check;
+assign rcv_op_end	= rcv_op_end_i	& mac_check;
+assign rcv_data	= mac_check	? rcv_data_i : {32{1'b0}};
 
 //WORD COUNTER
 always @(posedge clk or negedge rst_n)

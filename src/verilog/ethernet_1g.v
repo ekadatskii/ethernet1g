@@ -507,11 +507,12 @@ network_layer network_layer
 (
 	.clk					(	pll_62_5m_clk		)
 	,.rst_n				(	rst_n					)
+	,.dev_mac_addr_i	(	DEV_MAC_ADDR		)
 	
-	,.rcv_op_st			(	dl_up_op_st			)
-	,.rcv_op				(	dl_up_op				)
-	,.rcv_op_end		(	dl_up_op_end		)
-	,.rcv_data			(	dl_up_data			)
+	,.rcv_op_st_i		(	dl_up_op_st			)
+	,.rcv_op_i			(	dl_up_op				)
+	,.rcv_op_end_i		(	dl_up_op_end		)
+	,.rcv_data_i		(	dl_up_data			)
 	
 	,.source_addr_i	(	dl_source_addr		)
 	,.dest_addr_i		(	dl_dest_addr		)
@@ -545,14 +546,17 @@ transport_layer transport_layer
 (
 	.clk					(	pll_62_5m_clk	)
 	,.rst_n				(	rst_n				)
+	,.dev_ip_addr_i	(	DEV_IP_ADDR		)
 	
-	,.rcv_op_st			(	nl_up_op_st		)
-	,.rcv_op				(	nl_up_op			)
-	,.rcv_op_end		(	nl_up_op_end	)
-	,.rcv_data			(	nl_up_data		)
-	,.rcv_data_len		(	nl_up_data_len	)
-	,.prot_type			(	nl_prot_type	)
-	,.pseudo_crc_sum	(	nl_pseudo_crc	)
+	,.rcv_op_st_i		(	nl_up_op_st		)
+	,.rcv_op_i			(	nl_up_op			)
+	,.rcv_op_end_i		(	nl_up_op_end	)
+	,.rcv_data_i		(	nl_up_data		)
+	,.rcv_data_len_i	(	nl_up_data_len	)
+	,.src_ip_addr_i	(	nl_source_addr	)
+	,.dst_ip_addr_i	(	nl_dest_addr	)
+	,.prot_type_i		(	nl_prot_type	)
+	,.pseudo_crc_sum_i(	nl_pseudo_crc	)
 	
 	,.source_port_o	(	tcp_source_port_i	)
 	,.dest_port_o		(	tcp_dest_port_i	)
@@ -620,6 +624,13 @@ wire 				tcp_ram_rd;
 wire	[ 8:0]	tcp_ram_rd_addr;
 wire	[ 8:0]	tcp_ram_wr_addr;
 wire	[31:0]	tcp_ram_data;
+wire	[24:0]	tcp_ram_ctrl_i;
+wire	[24:0]	tcp_ram_ctrl_o;
+wire				tcp_ram_ctrl_wr;
+wire				tcp_ram_ctrl_rd;
+wire				tcp_ram_ctrl_full;
+wire				tcp_ram_ctrl_empty;
+wire	[15:0]	tcp_ram_pckt_len;
 
 //WRITE TO TCP RAM(ESTABLISH + PUSH FLAG + RIGHT PORTS + FIXED DATA LENGTH)
 assign tcp_ram_wr	= tcp_state_estblsh_o & udp_upper_op & (tcp_dest_port_i == LOCAL_PORT) & (tcp_source_port_i == tcp_dest_port_o);
@@ -665,7 +676,23 @@ ram2048	tcp_ram_0
 	,.wren					( tcp_ram_wr				)
 	,.q						( tcp_ram_data				)
 );
-	
+
+assign tcp_ram_ctrl_i = {{tcp_ram_wr_addr_r + 1'b1} ,tcp_data_len_i};
+assign tcp_ram_ctrl_wr	= udp_upper_op_end & tcp_ram_wr & !tcp_ram_ctrl_full;
+assign tcp_ram_ctrl_rd	= tcp_ram_rd & (tcp_ram_ctrl_o[24:16] == tcp_ram_rd_addr) & !tcp_ram_ctrl_empty;
+assign tcp_ram_pckt_len = tcp_ram_ctrl_o[15:0];
+
+umio_fifo #(16, 25) tcp_ram_ctrl_fifo
+(
+	.rst_n					(	rst_n						)
+	,.clk						(	pll_62_5m_clk			)
+	,.rd_data				(	tcp_ram_ctrl_o			)
+	,.wr_data				(	tcp_ram_ctrl_i			)
+	,.rd_en					(	tcp_ram_ctrl_rd		)
+	,.wr_en					(	tcp_ram_ctrl_wr		)
+	,.full					(	tcp_ram_ctrl_full		)
+	,.empty					(	tcp_ram_ctrl_empty	)
+);
 	
 	
 //tcp_new_pckt_rcv_o - пакет принят
@@ -676,7 +703,8 @@ usb_prot_decoder usb_prot_decoder (
 	,.rst_n					(	rst_n						)
 	
 	,.op_i					(	tcp_ram_rd				)//Operation active
-	,.op_dat_i				(	tcp_ram_data			)//Operation data	
+	,.op_dat_i				(	tcp_ram_data			)//Operation data
+	,.op_len_i				(	tcp_ram_pckt_len		)//Input data length
 );
 
 	
@@ -810,8 +838,10 @@ tcp_controller	#(WRAM_NUM, LOCAL_PORT) tcp_controller
 //--------------------------------------------------------------------------------//
 //										WRITE DATA PROCESS											 //
 //--------------------------------------------------------------------------------//
-wire	[47:0]		mac_dst_addr		= 48'h04_D4_C4_A5_A8_E0;//DENIS//48'h04_D4_C4_A5_93_CB;
-wire	[47:0]		mac_src_addr		= 48'h04_D4_C4_A5_A8_E1;
+parameter [47:0]	DEV_MAC_ADDR		= 48'h04_D4_C4_A5_A8_E1;	
+parameter [31:0]	DEV_IP_ADDR			= 32'hC1_E8_1A_4E;			//193.232.26.78
+
+wire	[47:0]		mac_dst_addr		= 48'h04_D4_C4_A5_A8_E0;	//DENIS//48'h04_D4_C4_A5_93_CB;
 wire	[15:0]		mac_type				= 16'h08_00;
 
 wire	[ 3:0]		ip_version			= 4'h4;
@@ -824,7 +854,6 @@ wire	[13:0]		ip_frag_offset		= 13'h00_00;
 wire	[ 7:0]		ip_ttl				= 8'h80;				//TODO CHANGE TO IF NEED 128
 wire	[ 7:0]		ip_prot				= 8'h06;				//TCP
 //wire	[15:0]		ip_head_chksum		= 16'h00_00;
-wire	[31:0]		ip_src_addr			= 32'hC1_E8_1A_4E; //193.232.26.78 //= 32'hA9_FE_CE_77;		//169.254.206.119
 //wire	[31:0]		ip_src_addr			= 32'hFF_FF_FF_FF;
 wire	[31:0]		ip_dst_addr			= 32'hC1_E8_1A_4F;//DENIS//32'hC1_E8_1A_64;
 wire	[31:0]		ip_options			= 32'h00_00_00_00;		//Not used now
@@ -1303,7 +1332,7 @@ udp_full_transmitter udp_full_transmitter
 	
 	//---------------------------------------------------------------------
 	//MAC
-	,.mac_src_addr			(	mac_src_addr	)
+	,.mac_src_addr			(	DEV_MAC_ADDR	)
 	,.mac_dst_addr			(	mac_dst_addr	)
 	,.mac_type				(	mac_type			)
 
@@ -1319,7 +1348,7 @@ udp_full_transmitter udp_full_transmitter
 	,.ip_ttl					(	ip_ttl			)
 	,.ip_prot				(	ip_prot			)
 //	,.ip_head_chksum		(	ip_head_chksum	)
-	,.ip_src_addr			(	ip_src_addr		)
+	,.ip_src_addr			(	DEV_IP_ADDR		)
 	,.ip_dst_addr			(	ip_dst_addr		)
 	,.ip_options			(	ip_options		)
 	
