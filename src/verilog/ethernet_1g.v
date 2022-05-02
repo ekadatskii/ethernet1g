@@ -606,20 +606,23 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	else if (udp_upper_op_end)		increment_cnt <= increment_cnt + 1'b1;
 	
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 																	increment_err <= 1'b0;
-	else if (udp_upper_op_end & (increment_data != increment_cnt))	increment_err <= 1'b1;
+	if (!rst_n) 						increment_err <= 1'b0;
+	else if (usb_prot_inc_err)		increment_err <= 1'b1;
 	
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n) 																	crc_err <= 1'b0;
-	else if (udp_upper_op_end & (udp_crc_sum != 16'hFFFF))			crc_err <= 1'b1;
+	if (!rst_n) 						crc_err <= 1'b0;
+	else if (usb_dat_crc_err_o)	crc_err <= 1'b1;
 	
 //----------------------------------------------------
 //2 PORTS RAM WIDTH 32 DEPTH 512 CAPACITY 2048 BYTES					TODO (TRY 4096)
 reg	[ 8:0]	tcp_ram_rd_addr_r;
 reg	[ 8:0]	tcp_ram_wr_addr_r;
 reg	[ 8:0]	tcp_ram_wr_addr_checked_r;
+reg	[15:0]	tcp_ram_pckt_cnt;
+reg	[15:0]	tcp_ram_ctrl_rd_cnt;
 
 wire 				tcp_ram_wr;
+wire				tcp_ram_wr_end;
 wire 				tcp_ram_rd;
 wire	[ 8:0]	tcp_ram_rd_addr;
 wire	[ 8:0]	tcp_ram_wr_addr;
@@ -631,15 +634,54 @@ wire				tcp_ram_ctrl_rd;
 wire				tcp_ram_ctrl_full;
 wire				tcp_ram_ctrl_empty;
 wire	[15:0]	tcp_ram_pckt_len;
+wire	[ 2:0]	tcp_ram_pckt_be;
+
+wire				usb_prot_inc_err;
+wire				usb_dat_crc_err_o;
+
+wire					packet_drop;
+reg	[31:0]		packet_next;
+
+
+//NEXT RECEIVE PACKET NUMBER
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)												packet_next <= 0;
+	else if (nl_up_op_end & tcp_flags_i[1] & (tcp_dest_port_i == LOCAL_PORT) & 									//SYN
+																(udp_crc_sum == 16'hFFFF))										
+																packet_next <= tcp_seq_num_i + 1;
+																
+	else if (tcp_state_estblsh_o & udp_upper_op & udp_upper_op_end & tcp_flags_i[4] & 
+																(tcp_dest_port_i == LOCAL_PORT) & 																
+																(tcp_source_port_i == tcp_dest_port_o) & 
+																(udp_crc_sum == 16'hFFFF) & 
+																(tcp_seq_num_i == packet_next))										//ACK
+																packet_next <= tcp_seq_num_i + tcp_data_len_i;
+																
+assign packet_drop = (tcp_state_estblsh_o & udp_upper_op & udp_upper_op_end & tcp_flags_i[4] & 
+																(tcp_dest_port_i == LOCAL_PORT) & 
+																(tcp_source_port_i == tcp_dest_port_o) & 
+																(tcp_seq_num_i != packet_next));
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)							tcp_ram_pckt_cnt <= 0;
+	else if (udp_upper_op_end)		tcp_ram_pckt_cnt <= 0;
+	else if (udp_upper_op)			
+											tcp_ram_pckt_cnt <= tcp_ram_pckt_cnt + 4;
 
 //WRITE TO TCP RAM(ESTABLISH + PUSH FLAG + RIGHT PORTS + FIXED DATA LENGTH)
-assign tcp_ram_wr	= tcp_state_estblsh_o & udp_upper_op & (tcp_dest_port_i == LOCAL_PORT) & (tcp_source_port_i == tcp_dest_port_o);
+assign tcp_ram_wr	= tcp_state_estblsh_o & udp_upper_op & (tcp_dest_port_i == LOCAL_PORT) & 
+																			(tcp_source_port_i == tcp_dest_port_o) & 
+																			(tcp_ram_pckt_cnt < tcp_data_len_i);
+//TCP DATA WRITE PACKET END
+assign tcp_ram_wr_end = tcp_state_estblsh_o & udp_upper_op & udp_upper_op_end & 
+																			(tcp_dest_port_i == LOCAL_PORT) & 
+																			(tcp_source_port_i == tcp_dest_port_o);
 
 //WRITE TO TCP RAM ADDRESS
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
 					tcp_ram_wr_addr_r <= 0;
-	else if (udp_upper_op_end & tcp_ram_wr & (udp_crc_sum != 16'hFFFF))
+	else if (tcp_ram_wr_end & ((udp_crc_sum != 16'hFFFF) | packet_drop))
 					tcp_ram_wr_addr_r <= tcp_ram_wr_addr_checked_r;
 	else if (tcp_ram_wr)
 					tcp_ram_wr_addr_r <= tcp_ram_wr_addr_r + 1'b1;
@@ -648,8 +690,8 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
 					tcp_ram_wr_addr_checked_r <= 0;
-	else if (udp_upper_op_end & tcp_ram_wr & (udp_crc_sum == 16'hFFFF))
-					tcp_ram_wr_addr_checked_r <= tcp_ram_wr_addr_r + 1'b1;
+	else if (tcp_ram_wr_end & ((udp_crc_sum == 16'hFFFF) & !packet_drop))
+					tcp_ram_wr_addr_checked_r <= tcp_ram_wr_addr_r + tcp_ram_wr;
 					
 assign tcp_ram_wr_addr = tcp_ram_wr_addr_r;
 
@@ -677,8 +719,8 @@ ram2048	tcp_ram_0
 	,.q						( tcp_ram_data				)
 );
 
-assign tcp_ram_ctrl_i = {{tcp_ram_wr_addr_r + 1'b1} ,tcp_data_len_i};
-assign tcp_ram_ctrl_wr	= udp_upper_op_end & tcp_ram_wr & !tcp_ram_ctrl_full;
+assign tcp_ram_ctrl_i = {{tcp_ram_wr_addr_r + tcp_ram_wr} ,tcp_data_len_i};
+assign tcp_ram_ctrl_wr	= tcp_ram_wr_end & (udp_crc_sum == 16'hFFFF) & !tcp_ram_ctrl_full;
 assign tcp_ram_ctrl_rd	= tcp_ram_rd & (tcp_ram_ctrl_o[24:16] == tcp_ram_rd_addr) & !tcp_ram_ctrl_empty;
 assign tcp_ram_pckt_len = tcp_ram_ctrl_o[15:0];
 
@@ -693,7 +735,16 @@ umio_fifo #(16, 25) tcp_ram_ctrl_fifo
 	,.full					(	tcp_ram_ctrl_full		)
 	,.empty					(	tcp_ram_ctrl_empty	)
 );
-	
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)						tcp_ram_ctrl_rd_cnt <= 0;
+	else if (tcp_ram_ctrl_rd)	tcp_ram_ctrl_rd_cnt <= 0;
+	else if (tcp_ram_rd)			tcp_ram_ctrl_rd_cnt <= tcp_ram_ctrl_rd_cnt + 4;
+
+assign tcp_ram_pckt_be =	((tcp_ram_pckt_len - tcp_ram_ctrl_rd_cnt)  > 3) ? 3'd4 : 
+									((tcp_ram_pckt_len - tcp_ram_ctrl_rd_cnt) == 3) ? 3'd3 : 
+									((tcp_ram_pckt_len - tcp_ram_ctrl_rd_cnt) == 2) ? 3'd2 : 
+									((tcp_ram_pckt_len - tcp_ram_ctrl_rd_cnt) == 1) ? 3'd1 : 3'd0;
 	
 //tcp_new_pckt_rcv_o - пакет принят
 //нужна будет проверка на то, повторяется ли пакет или нет.
@@ -705,6 +756,11 @@ usb_prot_decoder usb_prot_decoder (
 	,.op_i					(	tcp_ram_rd				)//Operation active
 	,.op_dat_i				(	tcp_ram_data			)//Operation data
 	,.op_len_i				(	tcp_ram_pckt_len		)//Input data length
+	,.op_be_i				(	tcp_ram_pckt_be		)
+	
+	,.dat_crc_err_o		(	usb_dat_crc_err_o		)
+	,.inc_chk_err_o		(	usb_prot_inc_err		)
+	,.tcp_data_len_i		(	tcp_data_len_i			)
 );
 
 	
@@ -764,20 +820,6 @@ wire					tcp_new_pckt_rd_o;
 wire					tcp_new_pckt_rcv_o;
 wire					fifo_ctrl_full;
 wire					fifo_ctrl_empty;
-wire					packet_drop;
-
-reg	[31:0]		packet_next;
-
-
-//NEXT RECEIVE PACKET NUMBER
-always @(posedge clk or negedge rst_n)
-	if (!rst_n)												packet_next <= 0;
-	else if (nl_up_op_end & tcp_flags_i[1])	//SYN
-																packet_next <= tcp_seq_num_i + tcp_data_len_i;
-	else if (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i == packet_next))	//ACK
-																packet_next <= tcp_seq_num_i + tcp_data_len_i;
-																
-assign packet_drop = (nl_up_op_end & tcp_flags_i[4] & (tcp_seq_num_i != packet_next));
 //--------------------------------------------------------------------------------//
 //										TCP CONTROLLER													 //
 //--------------------------------------------------------------------------------//
@@ -839,7 +881,7 @@ tcp_controller	#(WRAM_NUM, LOCAL_PORT) tcp_controller
 //										WRITE DATA PROCESS											 //
 //--------------------------------------------------------------------------------//
 parameter [47:0]	DEV_MAC_ADDR		= 48'h04_D4_C4_A5_A8_E1;	
-parameter [31:0]	DEV_IP_ADDR			= 32'hC1_E8_1A_4E;			//193.232.26.78
+parameter [31:0]	DEV_IP_ADDR			= 32'hC1_E8_1A_C8;			//193.232.26.200
 
 wire	[47:0]		mac_dst_addr		= 48'h04_D4_C4_A5_A8_E0;	//DENIS//48'h04_D4_C4_A5_93_CB;
 wire	[15:0]		mac_type				= 16'h08_00;
@@ -956,7 +998,9 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									DATA GENERATOR 									  //
 //---------------------------------------------------------------------//
-parameter		GEN_DATA_ON = 0;
+parameter				GEN_DATA_ON = 1;
+parameter	[7:0]		USB_ADDRESS = 8'h07;
+
 reg	[31:0]	timer_reg_r;
 wire				timer_pas2;
 
@@ -970,7 +1014,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 assign timer_pas2 = timer_reg_r == 0;
 
 
-localparam TCP_DATA_LENGTH_IN_BYTE = 16'd1448;//16'd1448;			//SHOULD BE LESS THEN RAM SIZE(2048)
+parameter	[15:0]	TCP_DATA_LENGTH_IN_BYTE = 16'd1441;//16'd20;//16'd1441;			//SHOULD BE LESS THEN RAM SIZE(2048)
 
 reg 				gen_start;
 reg 				gen_run;	
@@ -986,7 +1030,23 @@ wire				gen_data_wr;
 wire				wr_mem_rdy_cur;
 reg				gen_mem_rdy;
 
-assign gen_data_len = TCP_DATA_LENGTH_IN_BYTE;
+reg	[7:0]		gen_data_crc;
+
+wire	[7:0]		crc_out_h1;
+wire	[7:0]		crc_out_h2;
+wire	[7:0]		crc_out_h3;
+wire	[7:0]		crc_in_d1;
+wire	[7:0]		crc_in_d2;
+wire	[7:0]		crc_in_d3;
+wire	[7:0]		crc_in_d4;
+wire	[7:0]		crc_out_d1;
+wire	[7:0]		crc_out_d2;
+wire	[7:0]		crc_out_d3;
+wire	[7:0]		crc_out_d4;
+wire	[7:0]		crc_init_d1;
+wire	[31:0]	gen_data_w;
+
+assign gen_data_len = TCP_DATA_LENGTH_IN_BYTE + 7;
 
 always @*
 begin: mux_gen
@@ -1049,15 +1109,20 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 					gen_packet_num <= 64'b0;
 	else if (gen_stop)
 					gen_packet_num <= gen_packet_num + 1'b1;
-	
+
 //GEN DATA CONTENT 
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
-					gen_content_chkr <= 4'd4;
+					gen_content_chkr <= 4'd0;
 	else if (gen_stop)
-					gen_content_chkr <= 4'd4;
+					gen_content_chkr <= 4'd0;
 	else if (gen_data_wr & (gen_content_chkr != 4'd2))
-					gen_content_chkr <= gen_content_chkr - 1'b1;					
+					gen_content_chkr <= gen_content_chkr + 1'b1;
+
+//DATA WIRE 
+assign gen_data_w	=	(gen_content_chkr == 4'd1) ? {8'h00, 8'h01, 8'h02, 8'h03} : 
+							(gen_content_chkr == 4'd2) ? {(gen_data[31:24] + 4'd4), (gen_data[23:16] + 4'd4), (gen_data[15: 8] + 4'd4), (gen_data[ 7: 0] + 4'd4)} : 
+							{32{1'b0}};
 
 //DATA GENERATION				
 always @(posedge pll_62_5m_clk or negedge rst_n)
@@ -1065,13 +1130,13 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 					gen_data <= 0;
 					
 	else if (gen_start)
-					gen_data <= usb_prot_head0;
+					gen_data <= {16'h5E4D, USB_ADDRESS, TCP_DATA_LENGTH_IN_BYTE[15:8]};
 					
-	else if ((gen_content_chkr == 4'd4) & gen_data_wr)
-					gen_data <= {usb_prot_head1, gen_packet_num[15:0]};
+	else if ((gen_content_chkr == 4'd0) & gen_data_wr)
+					gen_data <= {TCP_DATA_LENGTH_IN_BYTE[7:0], crc_out_h3, gen_packet_num[15:0]};
 					
-	else if ((gen_content_chkr == 4'd3) & gen_data_wr)
-					gen_data <= udp_data_tr;	
+/*	else if ((gen_content_chkr == 4'd1) & gen_data_wr)
+					gen_data <= {gen_data_len[7:0], crc_out_h3, gen_packet_num[15:0]};	
 					
 	else if ((gen_content_chkr == 4'd2) & gen_data_wr & (gen_data_chkr == 16'd1440))
 				begin
@@ -1079,16 +1144,107 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 					gen_data[23:16] <= gen_packet_num[23:16];
 					gen_data[15: 8] <= gen_packet_num[15:8];
 					gen_data[ 7: 0] <= gen_packet_num[7:0];
-				end	
-	
-	else if ((gen_content_chkr == 4'd2) & gen_data_wr)	
+				end	*/
+	else if (gen_run & (gen_data_chkr + 4'd8 >= gen_data_len))
 				begin
-					gen_data[31:24] <= gen_data[31:24] + 4'd4;
-					gen_data[23:16] <= gen_data[23:16] + 4'd4;
-					gen_data[15: 8] <= gen_data[15: 8] + 4'd4;
-					gen_data[ 7: 0] <= gen_data[ 7: 0] + 4'd4;
+					if (gen_data_len - gen_data_chkr -4 == 1) gen_data[31:24] <= gen_data_crc;		else	gen_data[31:24] <= gen_data_w[31:24];
+					if (gen_data_len - gen_data_chkr -4 == 2) gen_data[23:16] <= crc_out_d1;		else	gen_data[23:16] <= gen_data_w[23:16];
+					if (gen_data_len - gen_data_chkr -4 == 3) gen_data[15: 8] <= crc_out_d2;		else	gen_data[15: 8] <= gen_data_w[15: 8];
+					if (gen_data_len - gen_data_chkr -4 == 4) gen_data[ 7: 0] <= crc_out_d3;		else	gen_data[ 7: 0] <= gen_data_w[ 7: 0];
+				end		
+	else if (gen_data_wr)	
+				begin
+					gen_data[31:24] <= gen_data_w[31:24];
+					gen_data[23:16] <= gen_data_w[23:16];
+					gen_data[15: 8] <= gen_data_w[15: 8];
+					gen_data[ 7: 0] <= gen_data_w[ 7: 0];
 				end
+								
+
 				
+//HEADER CRC			
+//CALCULATED CRC(5E4D + ADDRESS)
+crc8_ccitt crc8_out_h1
+(
+	.data_i		(		USB_ADDRESS					),		//ADDRESS
+//CALCULATED CRC FOR 5E4D
+	.crc_i		(		8'h3E							),  
+	
+	.crc_o		(		crc_out_h1					)	
+);
+
+//CALCULATED CRC(CRC1 + PACKET LENGTH HIGH)
+crc8_ccitt crc8_out_h2
+(
+	.data_i		(		TCP_DATA_LENGTH_IN_BYTE[15:8]		),
+	.crc_i		(		crc_out_h1								),
+	
+	.crc_o		(		crc_out_h2								)	
+);
+	
+//CALCULATED CRC(CRC2 + PACKET LENGTH LOW)
+crc8_ccitt crc8_out_h3
+(
+	.data_i		(		TCP_DATA_LENGTH_IN_BYTE[ 7:0]		),
+	.crc_i		(		crc_out_h2								),
+	
+	.crc_o		(		crc_out_h3								)	
+);
+
+
+//DATA CRC
+//DATA CRC BYTE 1
+crc8_ccitt crc8_out_d1
+(
+	.data_i		(		crc_in_d1					),
+	.crc_i		(		gen_data_crc				),
+	
+	.crc_o		(		crc_out_d1					)	
+);
+
+//DATA CRC BYTE 2
+crc8_ccitt crc8_out_d2
+(
+	.data_i		(		crc_in_d2					),
+	.crc_i		(		crc_out_d1					),
+	
+	.crc_o		(		crc_out_d2					)	
+);
+
+//DATA CRC BYTE 3
+crc8_ccitt crc8_out_d3
+(
+	.data_i		(		crc_in_d3					),
+	.crc_i		(		crc_out_d2					),
+	
+	.crc_o		(		crc_out_d3					)	
+);
+
+//DATA CRC BYTE 4
+crc8_ccitt crc8_out_d4
+(
+	.data_i		(		crc_in_d4					),
+	.crc_i		(		crc_out_d3					),
+	
+	.crc_o		(		crc_out_d4					)	
+);
+
+/*assign crc_init_d1	=	(gen_content_chkr == 4'd0) ? 8'h0 : 
+								(gen_content_chkr == 4'd1) ? gen_data_crc : 8'h0;*/
+								
+assign crc_in_d1		=	(gen_content_chkr == 4'd0) ? gen_packet_num[15:8] : gen_data_w[31:24];
+assign crc_in_d2		=	(gen_content_chkr == 4'd0) ? gen_packet_num[ 7:0] : gen_data_w[23:16];
+assign crc_in_d3		=	gen_data_w[15:8];
+assign crc_in_d4		=	gen_data_w[ 7:0];
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)														gen_data_crc <= 8'h0;
+	else if (gen_stop)											gen_data_crc <= 8'h0;
+	else if ((gen_content_chkr == 4'd0) & gen_data_wr)	gen_data_crc <= crc_out_d2;
+	else if (gen_data_wr)										gen_data_crc <= crc_out_d4;
+
+
+
 //---------------------------------------------------------------------//
 //									CRC-ERR GENERATOR 								  //
 //---------------------------------------------------------------------//
@@ -1146,7 +1302,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //---------------------------------------------------------------------//
 //									MEMORY GEN 											  //
 //---------------------------------------------------------------------//
-localparam				WRAM_NUM = 4;
+localparam				WRAM_NUM = 1; //16
 localparam	[31:0]	MEMORY_TIME = 32'd200_000_000;
 
 genvar mem_gen;

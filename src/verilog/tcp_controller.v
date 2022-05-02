@@ -47,12 +47,15 @@ module tcp_controller #(parameter MEMORY_NUM, parameter LOCAL_PORT)
 	,input	[MEMORY_NUM-1 :0] med_rd_ack_i
 	,output	[MEMORY_NUM-1 :0] mem_data_sel_o
 	
+	,output							test_next_packet_o
+	,output							test_new_data_rd_o
 /*	
 	,output	[31:0]		test_o
 	,output	[31:0]		tet2_o
 	,output	[31:0]		test3_o
 	,output	[31:0]		test4_o
 	,output	[31:0]		test5_o
+	
 */
 	
 );
@@ -697,6 +700,8 @@ assign tcp_state_estblsh_o		= (state == STATE_ESTABLISHED);
 assign tcp_seq_num_next_o		= tcp_seq_num_r;
 assign rcv_ack_num_o				= new_ack_num_r;
 assign rcv_flags_o				= new_flags_r;
+assign test_next_packet_o		= next_pckt_hit_w;
+assign test_new_data_rd_o		= new_data_rd_w;
 /*
 assign test_o = tcp_ack_num_diff;
 assign tet2_o = {31'b0, {(tcp_window_r < 6000)}};
