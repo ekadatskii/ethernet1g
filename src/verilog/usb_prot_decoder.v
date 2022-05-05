@@ -8,21 +8,23 @@ module usb_prot_decoder (
 	
 	,input					op_i			//Operation active
 	,input	[31:0]		op_dat_i		//Operation data
-	,input	[15:0]		op_len_i
 	,input	[ 2:0]		op_be_i
-	
+	,input	[ 3:0]		be_decode_prev_i
+
+	,output	[ 3:0]		be_decode_next_o
 	,output					dat_en_o
 	,output	[31:0]		dat_o
 	,output	[15:0]		dat_len_o
 	,output	[ 2:0]		dat_be_o
 	,output					dat_crc_chk_o
+	,output					trsmt_cmplt_o
 	
 	,output					inc_chk_err_o
 	,output					dat_crc_err_o
 	,output	[1:0]			test_o
 	,output					test2_o
 	,output	[3:0]			test3_o
-	,input	[15:0]		tcp_data_len_i
+//	,input	[15:0]		tcp_data_len_i
 );
 
 reg					rcv_run_r1;
@@ -39,6 +41,7 @@ reg	[ 7:0]		data_crc_r;
 reg	[(8*8)-1:0]	data_r;
 reg	[16:0]		wr_data_cnt;
 reg	[16:0]		rd_data_cnt;
+reg	[16:0]		packet_cnt;
 reg	[ 3:0]		head_ptr;
 reg	[ 3:0]		data_ptr;
 reg	[ 3:0]		data_end_ptr;
@@ -84,13 +87,18 @@ wire					lock;
 wire					run;
 
 //LOCK REGISTER TO CHANGE FLOW
-/*always @(posedge clk or negedge rst_n)
+always @(posedge clk or negedge rst_n)
 	if (!rst_n)				lock_r <= !main_i;
 	else if (run)			lock_r <= 1'b1;
-	else if (clr_i)		lock_r <= 1'b0;*/
+	else if (clr_i)		lock_r <= 1'b0;
 	
-assign lock = 1'b0;//!clr_i & lock_r;
-assign run	= header_fix & !header_fix_r;
+assign lock = !clr_i & lock_r;
+assign run	= flag_5E4D_r & op_i & !lock_r & ((packet_cnt + op_be_i >= data_len + 4 + 1) || ((header_cnt + op_be_i >= 4) & !header_crc_true));
+assign be_decode_next_o =	(run & (header_cnt + op_be_i == 4)) ?	4'b0000 :
+									(run & (header_cnt + op_be_i == 5)) ?	4'b0001 :
+									(run & (header_cnt + op_be_i == 6)) ?	4'b0011 :
+									(run & (header_cnt + op_be_i == 7)) ?	4'b0111 :
+																						4'b1111;
 
 //DATA RCV RUN REG 1
 always @(posedge clk or negedge rst_n)
@@ -110,13 +118,13 @@ assign op_be_decode =	(op_be_i == 4) ? 4'b1111 :
 	
 //BE DECODER 1
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)	op_be_decode_r1 <= 4'b0;
-	else 			op_be_decode_r1 <= op_be_decode; 
+	if (!rst_n)		op_be_decode_r1 <= 4'b0;
+	else if (op_i)	op_be_decode_r1 <= op_be_decode; 
 	
 //BE REG 1
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)	op_be_r1 <= 0;
-	else			op_be_r1 <= op_be_i;	
+	if (!rst_n)		op_be_r1 <= 0;
+	else if (op_i)	op_be_r1 <= op_be_i;	
 
 //5E HIT FLAG
 always @*
@@ -126,7 +134,7 @@ begin: FLAG_5E
 	
 	if (op_i & !lock)
 		for (i = 3; i >= 0; i = i - 1)
-			if (op_be_decode[i])	
+			if (op_be_decode[i] & be_decode_prev_i[i])	
 			begin
 				flag_5E = (op_dat_i[(8*i) +: 8] == 8'h5E);
 			end
@@ -153,7 +161,7 @@ begin: FLAG_5E4D
 	end
 	else if (op_i & !lock) 
 		for (k = 0; k < 3; k = k + 1)
-			if ((op_dat_i[(8*k) +: 16] == 16'h5E4D) & ((op_be_decode[k +: 2]) == 2'b11))
+			if ((op_dat_i[(8*k) +: 16] == 16'h5E4D) & ((op_be_decode[k +: 2]) == 2'b11) & ((be_decode_prev_i[k +: 2]) == 2'b11))
 			begin
 					flag_5E4D = 1'b1;
 					flag_5E4D_ptr = k;
@@ -229,6 +237,14 @@ always @(posedge clk or negedge rst_n)
 	else if (flag_5E4D_r & op_i & !header_fix)				header_cnt <= header_cnt + op_be_i;
 	else if (flag_5E4D & op_i)										header_cnt <= header_cnt + op_be_i - (4 - flag_5E4D_ptr);
 	
+//PACKET COUNTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)															packet_cnt <= 0;
+	else if (trsmt_cmplt)											packet_cnt <= 0;
+	else if (header_fix & !header_crc_true)					packet_cnt <= 0;
+	else if (flag_5E4D_r & op_i)									packet_cnt <= packet_cnt + op_be_i;
+	else if (flag_5E4D & op_i)										packet_cnt <= packet_cnt + op_be_i - (4 - flag_5E4D_ptr);
+	
 //HEADER PTR(HEADER ENDS AND DATA STARTS)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)																									head_ptr <= 4'b0;
@@ -251,13 +267,16 @@ always @(posedge clk or negedge rst_n)
 	else if (header_fix & header_crc_true)	header_fix_r <= 1;												
 
 //USB HEADER ADDRESS
-assign header_addr	= header_r[31:24];
+assign header_addr	= (header_cnt >= 1) ? header_r[31:24] :	op_dat_i[31:24];
 //USB LENGTH HIGH
-assign header_numh	= header_r[23:16];
+assign header_numh	= (header_cnt >= 2) ? header_r[23:16] :	(header_cnt == 0) ? op_dat_i[23:16] : op_dat_i[31:24];
 //USB LENGTH LOW
-assign header_numl	= header_r[15: 8];
+assign header_numl	= (header_cnt >= 3) ? header_r[15: 8] :	(header_cnt == 0) ? op_dat_i[15: 8] : 
+																					(header_cnt == 1) ? op_dat_i[23:16] : op_dat_i[31:24];
 //USB LENGTH CRC
-assign header_crc		= header_r[ 7: 0];
+assign header_crc		= (header_cnt >= 4) ? header_r[ 7: 0] :	(header_cnt == 0) ? op_dat_i[ 7: 0] : 
+																					(header_cnt == 1) ? op_dat_i[15: 8] : 
+																					(header_cnt == 2) ? op_dat_i[23:16] : op_dat_i[31:24];
 	
 //DATA LEN
 assign data_len = {header_numh, header_numl};
@@ -265,7 +284,7 @@ assign data_len = {header_numh, header_numl};
 //CALCULATED CRC(5E4D + ADDRESS)
 crc8_ccitt crc8_h1
 (
-	.data_i		(		header_r[4*8-1 -: 8]		),
+	.data_i		(		header_addr					),
 //CALCULATED CRC FOR 5E4D
 	.crc_i		(		8'h3E							),  
 	
@@ -275,7 +294,7 @@ crc8_ccitt crc8_h1
 //CALCULATED CRC(CRC1 + PACKET LENGTH HIGH)
 crc8_ccitt crc8_h2
 (
-	.data_i		(		header_r[3*8-1 -: 8]		),
+	.data_i		(		header_numh					),
 	.crc_i		(		crc_ho1						),
 	
 	.crc_o		(		crc_ho2						)	
@@ -284,7 +303,7 @@ crc8_ccitt crc8_h2
 //CALCULATED CRC(CRC2 + PACKET LENGTH LOW)
 crc8_ccitt crc8_h3
 (
-	.data_i		(		header_r[2*8-1 -: 8]		),
+	.data_i		(		header_numl					),
 	.crc_i		(		crc_ho2						),
 	
 	.crc_o		(		crc_ho3						)	
@@ -543,6 +562,7 @@ assign test3_o				= head_ptr;
 assign dat_crc_err_o		= trsmt_cmplt & !data_crc_chk;
 assign inc_chk_err_o		= trsmt_cmplt & (inc_reg != inc_cnt);
 assign run_o				= run;
+assign trsmt_cmplt_o		= trsmt_cmplt;
 assign dat_be_next_o		= 4'b0;
 
 endmodule

@@ -18,7 +18,7 @@ module transport_layer
 
 	,output	[15:0]	source_port_o
 	,output	[15:0]	dest_port_o
-	,output	[15:0]	packet_length_o
+	,output	[15:0]	data_length_o
 	,output	[15:0]	checksum_o
 	,output	[31:0]	seq_num_o
 	,output	[31:0]	ack_num_o
@@ -31,9 +31,11 @@ module transport_layer
 	,output				upper_op
 	,output				upper_op_end
 	,output	[31:0]	upper_data
+	,output	[ 1:0]	upper_data_be
 	,output	[15:0]	crc_sum_o
+	,output				crc_check_o
 	
-
+	,output	[15:0]	data_word_cnt_o
 );
 parameter	OPTIONS_SIZE = 4'd4;
 
@@ -70,6 +72,9 @@ wire	[15:0]	crc_dat_www;
 wire	[31:0]	crc_sum_w;
 wire	[31:0]	crc_sum_ww;
 wire	[15:0]	crc_sum_www;
+
+wire	[ 1:0]	data_be;
+wire	[15:0]	data_length;
 
 wire				rcv_op_st;
 wire				rcv_op;
@@ -180,7 +185,7 @@ always @(posedge clk or negedge rst_n)
 //UDP DATA WORD COUNTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												data_word_cnt <= 16'b0;
-	else if (rcv_op_end)										data_word_cnt <= 16'b0;
+	else if (upper_op_stop_r)								data_word_cnt <= 16'b0;
 	else if (rcv_op & (word_cnt >= 5) & (word_cnt >= tcp_head_len))	
 																	data_word_cnt <= data_word_cnt + 1'b1;
 
@@ -195,7 +200,7 @@ always @(posedge clk or negedge rst_n)
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												upper_op_stop_r <= 1'b0;
 	else if (upper_op_stop_r)								upper_op_stop_r <= 1'b0;
-	else if (rcv_op_end & rcv_op & (packet_length > (tcp_head_len * 4)))
+	else if (rcv_op_end & rcv_op /*& (packet_length > (tcp_head_len * 4))*/)
 																	upper_op_stop_r <= 1'b1;
 						
 //RECEIVE DATA OPERATION
@@ -226,18 +231,28 @@ assign crc_sum_w = crc_head_www + crc_dat_www + pseudo_crc_sum;
 assign crc_sum_ww = crc_sum_w[31:16] + crc_sum_w[15:0];
 assign crc_sum_www = crc_sum_ww[31:16] + crc_sum_ww[15:0];
 
+//DATA LENGTH
+assign data_length = packet_length - (tcp_head_len * 4);
+
+//BYTE ENABLE
+assign data_be = (data_length > (data_word_cnt << 2)) ? 2'b00 :	(((data_word_cnt << 2) - data_length) == 3) ? 2'b01 : 
+																						(((data_word_cnt << 2) - data_length) == 2) ? 2'b10 :
+																						(((data_word_cnt << 2) - data_length) == 1) ? 2'b11 : 2'b00;
+
 
 //INOUTS
 assign source_port_o		= source_port;
 assign dest_port_o		= dest_port;
-assign packet_length_o	= packet_length;
+assign data_length_o		= packet_length;
 assign checksum_o			= checksum;
 assign crc_sum_o			= crc_sum_www;
+assign crc_check_o		= crc_sum_www == 16'hFFFF;
 
 assign upper_op_st		= upper_op_start_r;
 assign upper_op			= upper_op_r;
 assign upper_op_end		= upper_op_stop_r;
 assign upper_data			= upper_data_r;
+assign upper_data_be		= data_be;
 
 
 assign seq_num_o			= seq_num;
@@ -247,7 +262,7 @@ assign tcp_head_len_o	= tcp_head_len;
 assign options_o			= options_reg[95:0];
 assign tcp_window_o		= tcp_window;
 
-
+assign data_word_cnt_o	= data_word_cnt;
 
 
 

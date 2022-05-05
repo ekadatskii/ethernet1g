@@ -1,3 +1,4 @@
+//TODO STATE CLOSE WAIT ADD TIMER(READ RFC)
 module tcp_controller #(parameter MEMORY_NUM, parameter LOCAL_PORT)
 (
 	input						clk
@@ -49,6 +50,7 @@ module tcp_controller #(parameter MEMORY_NUM, parameter LOCAL_PORT)
 	
 	,output							test_next_packet_o
 	,output							test_new_data_rd_o
+	,input	[31:0]				usb_dec_dat_i
 /*	
 	,output	[31:0]		test_o
 	,output	[31:0]		tet2_o
@@ -203,51 +205,51 @@ assign port_hit = (tcp_src_port_r == tcp_source_port_i);
 //NEW DATA LENGTH
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_data_len_r <= 0;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_data_len_r <= tcp_data_len_i;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_data_len_r <= tcp_data_len_i;
-	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_data_len_r <= tcp_data_len_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_data_len_r <= tcp_data_len_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_data_len_r <= tcp_data_len_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_data_len_r <= tcp_data_len_i;
 	
 //NEW DATA FLAGs
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_flags_r <= 0;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_flags_r <= tcp_flags_i;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_flags_r <= tcp_flags_i;
-	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_flags_r <= tcp_flags_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_flags_r <= tcp_flags_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_flags_r <= tcp_flags_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_flags_r <= tcp_flags_i;
 
 //NEW DATA SEQUENCE NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_seq_num_r <= 0;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_seq_num_r <= tcp_seq_num_i;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_seq_num_r <= tcp_seq_num_i;
-	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_seq_num_r <= tcp_seq_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_seq_num_r <= tcp_seq_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_seq_num_r <= tcp_seq_num_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_seq_num_r <= tcp_seq_num_i;
 
 //NEW DATA ACKNOWLEDGE NUMBER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_ack_num_r <= 0;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_ack_num_r <= tcp_ack_num_i;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_ack_num_r <= tcp_ack_num_i;
-	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_ack_num_r <= tcp_ack_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_ack_num_r <= tcp_ack_num_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_ack_num_r <= tcp_ack_num_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_ack_num_r <= tcp_ack_num_i;
 	
 //NEW DATA WINDOW
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_window_r <= 0;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_window_r <= tcp_window_i;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_window_r <= tcp_window_i;
-	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_window_r <= tcp_window_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_window_r <= tcp_window_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_window_r <= tcp_window_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_window_r <= tcp_window_i;
 	
 //NEW SOURCE PORT
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_src_port_r <= 0;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_src_port_r <= tcp_source_port_i;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_src_port_r <= tcp_source_port_i;
-	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_src_port_r <= tcp_source_port_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_src_port_r <= tcp_source_port_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_src_port_r <= tcp_source_port_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_src_port_r <= tcp_source_port_i;
 	
 //NEW DEST PORT
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)					new_dst_port_r <= 0;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit) 		new_dst_port_r <= tcp_dest_port_i;
-	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) new_dst_port_r <= tcp_dest_port_i;
-	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)						new_dst_port_r <= tcp_dest_port_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_dst_port_r <= tcp_dest_port_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_dst_port_r <= tcp_dest_port_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_dst_port_r <= tcp_dest_port_i;
 
 													
 //----------------------------------------------------------------------//
