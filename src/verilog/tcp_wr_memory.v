@@ -16,7 +16,6 @@ module tcp_wr_memory
 	
 	//INPUT DATA
 	,input					tcp_rcv_eop_i
-	,input					tcp_fin_flag_i
 	,input					tcp_rcv_rst_flag_i
 	,input					tcp_rcv_ack_flag_i
 	,input	[31:0]		tcp_rcv_ack_num_i
@@ -153,7 +152,7 @@ always @(posedge clk or negedge rst_n)
 	else if (wr_op_stop_i & wr_sel_i)
 					data_wr_lock_r <= 1;
 	//CLEAR WHEN DATA ACKNOWLEDGED	
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w & controller_work_st_i & (data_rd_lock_r | seq_num_lock_r))
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w & controller_work_st_i & (data_rd_lock_r | seq_num_lock_r))
 					data_wr_lock_r <= 0;
 
 					
@@ -173,7 +172,7 @@ always @(posedge clk or negedge rst_n)
 	else if (!controller_work_st_i)
 					data_rd_lock_r <= 0;
 	//CLEAR WHEN DATA ACKNOWLEDGED
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w)	
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w)	
 					data_rd_lock_r <= 1'b0;
 	//TODO CLEAR WHEN TIMER OVER
 	else if (wait_ack_timer_pas_w)
@@ -190,7 +189,7 @@ always @(posedge clk or negedge rst_n)
 	else if (!controller_work_st_i)
 					wait_ack_timer_on_r <= 0;
 	//CLEAR WHEN DATA ACKNOWLEDGED
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w)	
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w)	
 					wait_ack_timer_on_r <= 1'b0;
 	//SET WHEN DATA READ COMPLETE				
 	else if (data_rd_lock_r)
@@ -217,7 +216,7 @@ always @(posedge clk or negedge rst_n)
 	else if (!controller_work_st_i)
 					seq_num_lock_r <= 0;
 	//CLEAR WHEN DATA ACKNOWLEDGED
-	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w)
+	else if (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w)
 					seq_num_lock_r <= 1'b0;
 	//SET WHEN DATA READ COMPLETE				
 	else if (rd_op_stop_i & rd_sel_i & data_wr_lock_r)
@@ -242,6 +241,6 @@ assign rd_seq_lock_flg_o	= seq_num_lock_r;
 assign rd_seq_num_o			= (!seq_num_lock_r) ? seq_num_i : seq_num_r;
 assign rd_chksum_o			= data_chksum_r;
 assign rd_len_o 				= data_len_r;
-assign rd_data_ack_o			= data_rd_lock_r & (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & !tcp_fin_flag_i & ack_hit_w);
+assign rd_data_ack_o			= data_rd_lock_r & (tcp_rcv_eop_i & tcp_rcv_ack_flag_i & !tcp_rcv_rst_flag_i & ack_hit_w);
 
 endmodule

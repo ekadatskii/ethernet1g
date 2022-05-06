@@ -142,7 +142,6 @@ set_global_assignment -name SDC_FILE src/ethernet_1g.sdc
 set_global_assignment -name VERILOG_FILE src/verilog/umio_fifo.v
 set_global_assignment -name VERILOG_FILE src/verilog/udp_transmitter.v
 set_global_assignment -name VERILOG_FILE src/verilog/ip_transmitter.v
-set_global_assignment -name VERILOG_FILE src/verilog/eth1g_transmitter.v
 set_global_assignment -name VERILOG_FILE src/ip/opcrs_geth/TECH/CLK_SWITCH.v
 set_global_assignment -name VERILOG_FILE src/ip/opcrs_geth/TECH/CLK_DIV2.v
 set_global_assignment -name VERILOG_FILE src/ip/opcrs_geth/RMON/RMON_dpram.v
@@ -200,12 +199,10 @@ set_global_assignment -name QIP_FILE src/ip/iobuf1.qip
 set_global_assignment -name QIP_FILE src/ip/eth_pll.qip
 set_global_assignment -name QIP_FILE src/ip/altdio_out4.qip
 set_global_assignment -name QIP_FILE src/ip/altdio_out1.qip
-set_global_assignment -name VERILOG_FILE src/verilog/mac_head_transmitter.v
-set_global_assignment -name VERILOG_FILE src/verilog/eth_transmitter_arbiter.v
-set_global_assignment -name VERILOG_FILE src/verilog/udp_full_transmitter.v
 set_global_assignment -name VERILOG_FILE src/verilog/tcp_controller.v
 set_global_assignment -name QIP_FILE src/ip/ram_2048/ram2048.qip
 set_global_assignment -name SIGNALTAP_FILE output_files/rx_data.stp
 set_global_assignment -name VERILOG_FILE src/verilog/usb_prot_decoder.v
 set_global_assignment -name QIP_FILE src/ip/ram_2048be/ram2048be.qip
+set_global_assignment -name VERILOG_FILE src/verilog/tcp_transmitter.v
 set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top

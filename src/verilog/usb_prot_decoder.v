@@ -15,6 +15,7 @@ module usb_prot_decoder (
 	,output					dat_en_o
 	,output	[31:0]		dat_o
 	,output	[15:0]		dat_len_o
+	,output	[ 7:0]		dat_addr_o	
 	,output	[ 2:0]		dat_be_o
 	,output					dat_crc_chk_o
 	,output					trsmt_cmplt_o
@@ -554,6 +555,7 @@ always @(posedge clk or negedge rst_n)
 assign dat_en_o			= data_rd;
 assign dat_o				= data_r[8*8-1 :32];
 assign dat_len_o			= data_len;
+assign dat_addr_o			= header_addr;
 assign dat_be_o			= byte_en;
 assign dat_crc_chk_o		= data_crc_chk;
 assign test_o				= flag_5E4D_ptr_r;

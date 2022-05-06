@@ -167,8 +167,8 @@ assign new_data_rd_w	= 	(tcp_op_rcv_i & !new_data_rdy_r &((state == STATE_LISTEN
 																			 (state == STATE_ESTABLISHED)))	|
 																			 
 (tcp_op_rcv_i & next_pckt_hit_w & (state == STATE_ESTABLISHED) & port_hit & !((new_data_len_r != 0) & (tcp_data_len_i == 0)) &
-														 !tcp_flags_i[2] & !tcp_flags_i[1] & !tcp_flags_i[0] & 
-														 !new_flags_r[2] & !new_flags_r[1] & !new_flags_r[0]
+														 !tcp_flags_i[2] & !tcp_flags_i[1] & 
+														 !new_flags_r[2] & !new_flags_r[1]
 														 );
 
 //NEW DATA READY FLAG
@@ -187,7 +187,7 @@ always @(posedge clk or negedge rst_n)
 													new_data_rdy_r <= 1'b1;
 													
 	//READ NEW DATA IF ACK FLAG HIT and SEQ_NUM BELONGS TO THE NEXT PACKET and DATA_LEN not changed or become not NULL(only ESTABLISHED state) 
-	else if (tcp_op_rcv_i & !tcp_flags_i[2] & !tcp_flags_i[1] & !tcp_flags_i[0] & !new_flags_r[2] & !new_flags_r[1] & !new_flags_r[0] & next_pckt_hit_w & !((new_data_len_r != 0) & (tcp_data_len_i == 0)) & (state == STATE_ESTABLISHED) & port_hit)
+	else if (tcp_op_rcv_i & !tcp_flags_i[2] & !tcp_flags_i[1] & !new_flags_r[2] & !new_flags_r[1] & next_pckt_hit_w & !((new_data_len_r != 0) & (tcp_data_len_i == 0)) & (state == STATE_ESTABLISHED) & port_hit)
 													new_data_rdy_r <= 1'b1;
 	//CLEAR WHEN DATA USED(NOT CLEAR IF NEW RIGHT DATA OR ACK IN ESTABLISHED STATE RECEIVED)
 	else if (tcp_op_rcv_rd_r)

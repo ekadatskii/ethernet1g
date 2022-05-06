@@ -19,7 +19,6 @@ module transport_layer
 	,output	[15:0]	source_port_o
 	,output	[15:0]	dest_port_o
 	,output	[15:0]	data_length_o
-	,output	[15:0]	checksum_o
 	,output	[31:0]	seq_num_o
 	,output	[31:0]	ack_num_o
 	,output	[5 :0]	tcp_flags_o		
@@ -39,7 +38,7 @@ module transport_layer
 );
 parameter	OPTIONS_SIZE = 4'd4;
 
-//UDP FIELDS
+//TCP OR UDP FIELDS
 reg	[15:0]	source_port;
 reg	[15:0]	dest_port;
 reg	[31:0]	seq_num;
@@ -100,7 +99,7 @@ always @(posedge clk or negedge rst_n)
 	else if (rcv_op_end)				word_cnt <= 16'b0;
 	else if (rcv_op & tcp_prot)	word_cnt <= word_cnt + 1'b1;
 
-//UDP FIELDS
+//TCP OR UDP FIELDS
 //-------------------------------------------------------------------------------
 //VERSION NUMBER
 always @(posedge clk or negedge rst_n)
@@ -173,7 +172,7 @@ assign crc_head_w = source_port + dest_port + seq_num[31:16] + seq_num[15:0] + a
 assign crc_head_ww = crc_head_w[31:16] + crc_head_w[15:0];
 assign crc_head_www = crc_head_ww[31:16] + crc_head_ww[15:0];
 
-//UDP DATA
+//TCP OR UDP DATA
 //-------------------------------------------------------------------------------
 //RECEIVE DATA
 always @(posedge clk or negedge rst_n)
@@ -182,21 +181,21 @@ always @(posedge clk or negedge rst_n)
 																	upper_data_r <= rcv_data;
 	else 															upper_data_r <= 32'b0;
 	
-//UDP DATA WORD COUNTER
+//TCP OR UDP DATA WORD COUNTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												data_word_cnt <= 16'b0;
 	else if (upper_op_stop_r)								data_word_cnt <= 16'b0;
 	else if (rcv_op & (word_cnt >= 5) & (word_cnt >= tcp_head_len))	
 																	data_word_cnt <= data_word_cnt + 1'b1;
 
-//START UDP DATA
+//START TCP OR UDP DATA
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												upper_op_start_r <= 1'b0;
 	else if (upper_op_start_r)								upper_op_start_r <= 1'b0;
 	else if (rcv_op & (word_cnt == tcp_head_len) & (packet_length > (tcp_head_len * 4)))
 																	upper_op_start_r <= 1'b1;
 								
-//STOP UDP DATA
+//STOP TCP OR UDP DATA
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												upper_op_stop_r <= 1'b0;
 	else if (upper_op_stop_r)								upper_op_stop_r <= 1'b0;
@@ -244,7 +243,6 @@ assign data_be = (data_length > (data_word_cnt << 2)) ? 2'b00 :	(((data_word_cnt
 assign source_port_o		= source_port;
 assign dest_port_o		= dest_port;
 assign data_length_o		= packet_length;
-assign checksum_o			= checksum;
 assign crc_sum_o			= crc_sum_www;
 assign crc_check_o		= crc_sum_www == 16'hFFFF;
 
