@@ -61,6 +61,8 @@ input                   WCtrlDataStart          ,// This signals resets the WCTR
 input                   RStatStart              ,// This signal resets the RSTAT BIT in the MIIM Command register
 input                   UpdateMIIRX_DATAReg     ,// Updates MII RX_DATA register with read data
 output			[31:0]	timer_check_o,
+
+output			[15:0]	miistat_r18_o,
 input							btn1,
 input							btn2,
 input							btn3,
@@ -95,7 +97,7 @@ input							btn4
     RegCPUData U_0_021(RX_APPEND_CRC            ,7'd021,16'h0000,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_022(Rx_Hwmark                ,7'd022,16'h001a,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_023(Rx_Lwmark                ,7'd023,16'h0010,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
-    RegCPUData U_0_024(CRC_chk_en               ,7'd024,16'h0000,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
+    RegCPUData U_0_024(CRC_chk_en               ,7'd024,16'h0001,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_025(RX_IFG_SET               ,7'd025,16'h000c,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_026(RX_MAX_LENGTH            ,7'd026,16'h2710,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
     RegCPUData U_0_027(RX_MIN_LENGTH            ,7'd027,16'h0040,Reset,Clk_reg,!WRB,CSB,CA,CD_in);
@@ -157,9 +159,12 @@ wire					cd_wr;
 
 wire	[ 5:0]		phy_addr;
 wire	[ 5:0]		phy_reg_addr;
-wire					phy_wr;
-wire	[15:0]		phy_dat_out;
-wire					phy_wr_start_in;
+wire					phy_wr_start;
+wire					phy_rd_start;
+wire	[15:0]		phy_dat_o;
+wire	[15:0]		phy_dat_i;
+wire					phy_wr_busy;
+wire					phy_rd_busy;
 		  
 PhyMacInit PhyMacInit (
 	.clk						(		Clk_reg		)
@@ -170,16 +175,21 @@ PhyMacInit PhyMacInit (
 	,.CD_wr					(		cd_wr			)
 	,.CD_in					(						)
 	
-	,.phy_rd					(								)
-	,.phy_wr					(		phy_wr				)
+	,.phy_rd_start			(		phy_rd_start		)
+	,.phy_wr_start			(		phy_wr_start		)
 	,.phy_addr_out			(		phy_addr				)
 	,.phy_reg_addr_out	(		phy_reg_addr		)
-	,.phy_dat_out			(		phy_dat_out			)
-	,.phy_dat_in			(								)
-	,.phy_wr_start_in		(		phy_wr_start_in	)
+	,.phy_dat_o				(		phy_dat_o			)
+	,.phy_dat_i				(		phy_dat_i			)
+	,.phy_wr_busy			(		phy_wr_busy			)
+	,.phy_rd_busy			(		phy_rd_busy			)
+	
+	,.miistat_r18_o		(		miistat_r18_o		)
 
 );
-assign phy_wr_start_in = WCtrlDataStart;
+
+assign phy_wr_busy = WCtrlDataStart;
+assign phy_rd_busy = RStatStart;
 
 		  
 //PHY ADDRESS
@@ -187,12 +197,13 @@ assign Fiad			= phy_addr;
 //PHY REG ADDRESS
 assign Rgad			= phy_reg_addr;	
 //PHY READ OPERATION
-assign RStat		= RStat_reg;
+assign RStat		= phy_rd_start;
 //PHY WRITE
-assign WCtrlData	= phy_wr;
+assign WCtrlData	= phy_wr_start;
 //PHY WRITE DATA
-assign CtrlData	= phy_dat_out;
-
+assign CtrlData	= phy_dat_o;
+//PHY READ DATA
+assign phy_dat_i	= Prsd;
 
 //TEST BUTTONS
 reg btn4_q2;
@@ -328,33 +339,45 @@ module PhyMacInit (
 	,input	[15:0]	CD_in				//DATA IN
 	
 	//PHY
-	,output				phy_rd
-	,output				phy_wr
+	,output				phy_rd_start
+	,output				phy_wr_start
 	,output	[ 4:0]	phy_addr_out
 	,output	[ 4:0]	phy_reg_addr_out
-	,output	[15:0]	phy_dat_out
-	,output	[15:0]	phy_dat_in
-	,input				phy_wr_start_in
+	,output	[15:0]	phy_dat_o
+	,input	[15:0]	phy_dat_i
+	,input				phy_wr_busy 
+	,input				phy_rd_busy 
+	
+	//MII REGS OUTPUT
+	,output	[15:0]	miistat_r18_o
 );
 
-localparam		MAC_REG_NUM	= 2;
-localparam		PHY_REG_NUM	= 1;
-localparam		PHY_ADDR		= 5'b0;
+localparam		MAC_REG_NUM		= 2;
+localparam		PHY_WR_REG_NUM	= 1;//6;
+localparam		PHY_ADDR			= 5'b0;
+localparam		PHY_RD_REG_NUM = 0;
 
 reg	[ 7:0]	wr_cnt_r;
 reg				wr_en_r;
 reg	[31:0]	phy_timer_r;
+reg	[31:0]	phy_cycrd_timer_r;
 reg	[ 7:0]	phy_wr_cnt_r;
-reg				phy_wr_en_r;
-reg				phy_wr_on_r;
-reg				phy_rd_en_r;
 reg				phy_wr_start_r;
+reg				phy_wr_on_r;
+reg				phy_rd_start_r;
+reg				phy_rd_on_r;
+reg				phy_wr_busy_r;
+reg				phy_rd_busy_r;
+reg	[15:0]	miistat_r18_r;
+reg	[ 7:0]	phy_rd_cnt_r;
 
 wire	[ 7:0]	ca_mux;
 wire	[15:0]	cd_mux;
 wire	[15:0]	phy_reg_addr_mux;
 wire	[15:0]	phy_dat_mux;
 wire				phy_timer_pas;
+wire				phy_cycrd_timer_pas;
+
 
 //--------------------------------------------------------------------------
 //WRITE TO REGISTER ON
@@ -381,48 +404,115 @@ assign cd_mux = 	(wr_cnt_r == 8'h00) ?	16'h00FF :		//Tx_Hwmark
 						(wr_cnt_r == 8'h01) ?	16'h0012 :		//IFGset
 														16'h0000;
 //--------------------------------------------------------------------------
+//PHY WRITE INITIALISATION PROCESS
 //PHY TIMER
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)												phy_timer_r <= 32'd50_000_000;			//MIN 300ms wait
-	else if (!phy_timer_pas)							phy_timer_r <= phy_timer_r - 1'b1;							
-
+	if (!rst_n)												phy_timer_r <= 32'd50_000_000;						//MIN 300ms wait
+	else if (!phy_timer_pas)							phy_timer_r <= phy_timer_r - 1'b1;				
+	
 //PHY TIMER PAS
-assign phy_timer_pas = phy_timer_r == 0;
+assign phy_timer_pas = phy_timer_r == 0;	
 
 //PHY WRITE TO REGISTER ON
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)												phy_wr_en_r <= 1'b0;
-	else if (phy_wr_en_r & (phy_wr_cnt_r == PHY_REG_NUM - 1'b1))
-																phy_wr_en_r <= 1'b0;
-	else if (phy_timer_pas & (phy_wr_cnt_r != PHY_REG_NUM) & !phy_wr_on_r)
-																phy_wr_en_r <= 1'b1;	
+	if (!rst_n)												phy_wr_start_r <= 1'b0;
+	else if (phy_wr_start_r)
+																phy_wr_start_r <= 1'b0;
+	else if (phy_timer_pas & (phy_wr_cnt_r != PHY_WR_REG_NUM) & !phy_wr_on_r)
+																phy_wr_start_r <= 1'b1;	
 
 //PHY WRITE TO REGISTER COUNTER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												phy_wr_cnt_r <= 0;
-	else if (phy_wr_start_r & !phy_wr_start_in)		
+	else if (phy_wr_busy_r & !phy_wr_busy & (phy_wr_cnt_r != PHY_WR_REG_NUM))		
 																phy_wr_cnt_r <= phy_wr_cnt_r + 1'b1;
-
+//WRITE BUSY REGISTER
 always @(posedge clk or negedge rst_n)
-	if (!rst_n)												phy_wr_start_r <= 0;
-	else 														phy_wr_start_r <= phy_wr_start_in;
+	if (!rst_n)												phy_wr_busy_r <= 0;
+	else 														phy_wr_busy_r <= phy_wr_busy;
 	
 //PHY WRITE PROCESS ON
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												phy_wr_on_r <= 1'b0;
-	else if (phy_wr_on_r & phy_wr_start_r & !phy_wr_start_in)
+	else if (phy_wr_on_r & phy_wr_busy_r & !phy_wr_busy)
 																phy_wr_on_r <= 1'b0;
-	else if (phy_wr_en_r)
+	else if (phy_wr_start_r)
 																phy_wr_on_r <= 1'b1;	
 
+//--------------------------------------------------------------------------
+//PHY READ PROCESS
 																
+//PHY READ TIMER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												phy_cycrd_timer_r <= 32'd250_000_000;
+	else if (phy_rd_start_r)							phy_cycrd_timer_r <= 32'd250_000_000;
+	else if (!phy_cycrd_timer_pas)					phy_cycrd_timer_r <= phy_cycrd_timer_r - 1'b1;
+	
+//CYCLYC READ TIMER PAS
+assign phy_cycrd_timer_pas = phy_cycrd_timer_r == 0;
+
+//PHY READ FROM REGISTER ON
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												phy_rd_start_r <= 1'b0;
+	else if (phy_rd_start_r)
+																phy_rd_start_r <= 1'b0;
+	//READ FIRST REGISTER START
+	else if (phy_cycrd_timer_pas & !phy_rd_on_r)
+																phy_rd_start_r <= 1'b0;//1'b1;
+	//READ NEXT REGISTERS START
+	else if (phy_rd_on_r & phy_rd_busy_r & !phy_rd_busy & (phy_rd_cnt_r != PHY_RD_REG_NUM - 1))
+																phy_rd_start_r <= 1'b0;//1'b1;
 																
+//PHY WRITE TO REGISTER COUNTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												phy_rd_cnt_r <= 0;
+	else if (phy_rd_busy_r & !phy_rd_busy & (phy_rd_cnt_r == PHY_RD_REG_NUM - 1))		
+																phy_rd_cnt_r <= 0;
+	else if (phy_rd_busy_r & !phy_rd_busy)		
+																phy_rd_cnt_r <= phy_rd_cnt_r + 1'b1;
+																
+//READ BUSY REGISTER
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												phy_rd_busy_r <= 0;
+	else 														phy_rd_busy_r <= phy_rd_busy;																
+
+//PHY READ PROCESS ON
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												phy_rd_on_r <= 1'b0;
+	else if (phy_rd_on_r & phy_rd_busy_r & !phy_rd_busy)
+																phy_rd_on_r <= 1'b0;
+	else if (phy_rd_start_r)
+																phy_rd_on_r <= 1'b1;																	
+																
+//MEDIA INDEPENDENT INTERFACE STATUS
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												miistat_r18_r <= 16'b0;
+	else if (phy_rd_on_r & phy_rd_busy_r & !phy_rd_busy & (phy_reg_addr_mux == 5'h18))
+																miistat_r18_r <= phy_dat_i;
+			
+			
+
+//--------------------------------------------------------------------------																
 //PHY WRITE REGISTER ADDRESSES MUX
-assign phy_reg_addr_mux =	(phy_wr_cnt_r == 8'h00) ?	5'h17 :								//REG 17
-																		5'h00;														
+assign phy_reg_addr_mux =	((phy_wr_start_r | phy_wr_on_r) & (phy_wr_cnt_r == 8'h00))	? 5'h17 :		//REG 17
+									((phy_wr_start_r | phy_wr_on_r) & (phy_wr_cnt_r == 8'h01))	? 5'h00 :		//REG 00
+									((phy_wr_start_r | phy_wr_on_r) & (phy_wr_cnt_r == 8'h02))	? 5'h0D :	
+									((phy_wr_start_r | phy_wr_on_r) & (phy_wr_cnt_r == 8'h03))	? 5'h0E :
+									((phy_wr_start_r | phy_wr_on_r) & (phy_wr_cnt_r == 8'h04))	? 5'h0D :
+									((phy_wr_start_r | phy_wr_on_r) & (phy_wr_cnt_r == 8'h05))	? 5'h14 :
+									
+									((phy_rd_start_r | phy_rd_on_r) & (phy_rd_cnt_r == 8'h00))	? 5'h18 :		
+									((phy_rd_start_r | phy_rd_on_r) & (phy_rd_cnt_r == 8'h01))	? 5'h0E :		
+									((phy_rd_start_r | phy_rd_on_r) & (phy_rd_cnt_r == 8'h02))	? 5'h0E :
+																													  5'h00;
 														
 //PHY WRITE REGISTER DATA MUX													
-assign phy_dat_mux		= 	(phy_wr_cnt_r == 8'h00) ?	16'hC000 :		//REG 17
+assign phy_dat_mux		= 	(phy_wr_cnt_r == 8'h00) ?	16'hC000 :													//DATA TO REG 17
+									(phy_wr_cnt_r == 8'h01) ?	16'hB140 :												
+									(phy_wr_cnt_r == 8'h02) ?	16'h001F :												
+									(phy_wr_cnt_r == 8'h03) ?	16'h01EB :												
+									(phy_wr_cnt_r == 8'h04) ?	16'h401F :												
+									(phy_wr_cnt_r == 8'h05) ?	16'h0006 :
 																		16'h0000;														
 														
 //--------------------------------------------------------------------------		
@@ -434,9 +524,12 @@ assign CD_wr	= wr_en_r;
 //PHY OUTPUTS		
 assign phy_addr_out		= PHY_ADDR;
 assign phy_reg_addr_out = phy_reg_addr_mux;
-assign phy_rd				= 1'b0;					//NOT USED
-assign phy_wr				= phy_wr_en_r;
-assign phy_dat_out		= phy_dat_mux;
+assign phy_wr_start		= phy_wr_start_r;
+assign phy_dat_o			= phy_dat_mux;
+assign phy_rd_start		= phy_rd_start_r;
+
+//MII REGS OUTPUT
+assign miistat_r18_o		= miistat_r18_r;
 
 
 

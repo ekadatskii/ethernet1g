@@ -172,7 +172,7 @@ always @(posedge rx_clk or posedge reset_rx_clk)
 //            rgmii_in_4_reg <= {rgmii_in_4_wire[3:0], rgmii_in_4_temp_reg[7:4]};
             rgmii_in_4_reg <= {rgmii_in_4_temp_reg[7:4], rgmii_in_4_wire[3:0]};
             rx_err <= rgmii_in_1_wire[0];
-            rx_dv <= rgmii_in_1_temp_reg[1];            
+            rx_dv <= rgmii_in_1_temp_reg[1];
         end
     end
 	

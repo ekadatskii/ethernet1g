@@ -102,6 +102,7 @@ input           Mdi,
 output          Mdc,                      // MII Management Data Clock       
 
 //ADD BY EKADATSKII
+output	[15:0]miistat_r18_o,
 input				btn1,						//Button
 input				btn2,						//Button
 input				btn3,						//Button
@@ -473,6 +474,7 @@ Reg_int U_Reg_int(
 .RStatStart         		(RStatStart         		),
 .UpdateMIIRX_DATAReg		(UpdateMIIRX_DATAReg		),
 //ADD BY EKADATSKII
+.miistat_r18_o				(miistat_r18_o),
 .btn1							(btn1),
 .btn2							(btn2),
 .btn3							(btn3),

@@ -1,3 +1,4 @@
+//`define ROUTER_ENABLE
 
 module ethernet_1g
 (
@@ -38,22 +39,26 @@ module ethernet_1g
 
 //**************************************************************************************************************//
 parameter	[15:0]	TCP_LOCAL_PORT				= 16'd63256;					//DEVICE TCP PORT
-parameter 				TCP_RESEND_TIME			= 32'd200_000_000;			//TIME WAIT BETWEEN OLD PACKETS SEND
-parameter	[47:0]	DEV_MAC_ADDR				= 48'h04_D4_C4_A5_A8_E1;	
-parameter	[31:0]	DEV_IP_ADDR					= FORPC_IP_ADDR;				
+parameter 				TCP_RESEND_TIME			= 32'd50_000_000;				//TIME WAIT BETWEEN OLD PACKETS SEND
+parameter	[47:0]	DEV_MAC_ADDR				= 48'h04_D4_C4_A5_A8_77;
+`ifdef ROUTER_ENABLE
+parameter	[31:0]	DEV_IP_ADDR					= FORROUTER_IP_ADDR;
+`else
+parameter	[31:0]	DEV_IP_ADDR					= FORROUTER_IP_ADDR;//FORPC_IP_ADDR;
+`endif
 parameter	[31:0]	FORPC_IP_ADDR				= 32'hC1_E8_1A_C8;			//193.232.26.200
-parameter	[31:0]	FORROUTER_IP_ADDR			= 32'hC0_A8_01_AE;			//192.168.1.174
-parameter	[47:0]	DEST_MAC_ADDR				= MYPC_MAC_ADDR;
-parameter	[47:0]	MYPC_MAC_ADDR				= 48'h04_D4_C4_A5_A8_E0;
+parameter	[31:0]	FORROUTER_IP_ADDR			= 32'hC0_A8_01_4D;			//192.168.1.77
+//parameter	[47:0]	DEST_MAC_ADDR				= MYPC_MAC_ADDR;
+//parameter	[47:0]	MYPC_MAC_ADDR				= 48'h04_D4_C4_A5_A8_E0;
 //parameter	[47:0]	DENIS_MAC_ADDR				= 48'h04_D4_C4_A5_93_CB;
-//parameter	[47:0]	ROUTER_MAC_ADDR			= 48'h78_24_AF_7D_49_B8;
+//parameter	[47:0]	WIFI_MAC_ADDR				= 48'h48_89_E7_AF_66_68;
 parameter				GEN_DATA_ON					= 1;								//ENABLE DATA GENERATE
 parameter	[7:0]		GEN_DATA_USB_WR_ADDRESS	= 8'h07;							//USB WRITE ADDRES IN PACKET
 parameter	[15:0]	GEN_DATA_LENGTH_IN_BYTE	= 16'd1441;						//SHOULD BE LESS THEN RAM SIZE(2048)
 parameter				CRC_ERR_NUM					= 1_000_000;					//PACKET NUMBER WHEN CRC ERROR TESTS
 parameter				CRC_ERR_ON					= 0;								//ENABLE CRC ERRORS
-parameter				WRAM_NUM						= 16;								//16(MAX)
-parameter	[31:0]	WRAM_NEW_PCKT_TIME		= 32'd200_000_000;			//TIME UNTIL PACKET CAN BE RESEND
+parameter				WRAM_NUM						= 2;								//16(MAX)
+parameter	[31:0]	WRAM_NEW_PCKT_TIME		= 32'd50_000_000;				//TIME UNTIL PACKET CAN BE RESEND
 //**************************************************************************************************************//
 
 reg	[ 2: 0]		rst_rr;
@@ -73,16 +78,23 @@ reg					rgmii_ctl_neg;
 reg	[ 3:0]		rgmii_pos_r;
 reg	[ 3:0]		rgmii_neg_r;
 reg					rgmii_ctl_pos_r;
+reg					rgmii_ctl_pos_rr;
 reg					rgmii_ctl_neg_r;
 
 reg					Rx_mac_ra_r;
 reg					Rx_mac_eop_r;
 reg					Tx_mac_wr_r;
+reg					clk_sel_r;
 
 wire	[ 7: 0]		rgmii_in_4_temp_reg_out;
 wire	[ 1: 0]		rgmii_in_1_temp_reg_out;
 
-wire					mac_tx_clk_45_shift;
+wire					mac_tx125_clk;
+wire					mac_tx125_clk_90_shift;
+wire					mac_tx25_clk;
+wire					mac_tx25_clk_90_shift;
+wire					mac_tx_clk_90_shift;
+wire					mac_tx_clk;
 
 //FIFO
 wire	[ 9:0]		data_to_fifo;
@@ -159,6 +171,12 @@ wire	[31: 0]		nl_source_addr;
 wire	[31: 0]		nl_dest_addr;
 wire	[15: 0]		nl_pseudo_crc;
 
+wire	[47: 0]		arp_src_haddr;
+wire	[31: 0]		arp_src_paddr;
+wire	[47: 0]		arp_dst_haddr;
+wire	[31: 0]		arp_dst_paddr;
+wire					arp_op_cmplt;
+
 //TRANSPORT LAYER
 //TODO RENAME
 wire	[95: 0]		tl_options;
@@ -176,7 +194,17 @@ wire	[31: 0]		tl_ack_num;
 wire	[ 5: 0]		tl_flags;
 wire	[ 3: 0]		tl_head_len;
 wire	[15: 0]		tl_window;
-wire	[15: 0]		tl_data_len; 
+wire	[15: 0]		tl_data_len;
+
+//UDP RECEIVER
+wire 					udp_up_op_st;
+wire 					udp_up_op;
+wire 					udp_up_op_end;
+wire	[15: 0]		udp_up_src_port;
+wire	[15: 0]		udp_up_dst_port;
+wire 	[31: 0]		udp_up_data;
+wire 	[15: 0]		udp_crc_sum;
+wire 					udp_crc_check;
 
 //Altera Pll signals
 wire					pll_25m_clk;
@@ -222,6 +250,7 @@ wire					mac_rxer;       // hps_gmii
 wire	[ 7: 0]		mac_rxd;        // hps_gmii
 wire					mac_col;        // hps_gmii
 wire					mac_crs;        // hps_gmii
+wire	[15: 0]		miistat_r18;
 
 wire	[ 3: 0]		alt_adap_txd;
 wire					alt_adap_txctl;
@@ -245,11 +274,42 @@ assign 						rst_n		= rst_rr[2];
 //--------------------------------------------------------------------------------//
 altpll_125	altpll_125_inst
 (
-	.inclk0 ( clk_125 ),
-	.c0 ( pll_62_5m_clk ),			//62.5 Mhz
-	.c1 ( mac_tx_clk_45_shift ),
-	.locked (  )
+	.inclk0	( clk_125 )
+	,.c0		( pll_62_5m_clk 				)	//62.5 Mhz user logic clock
+	,.c1		( mac_tx125_clk				)	//125 Mhz Eth tx data clock
+	,.c2		( mac_tx125_clk_90_shift	)	//125 Mhz Eth shift out tx clock
+	,.c3		( mac_tx25_clk					)	//25 Mhz Eth tx data clock
+	,.c4		( mac_tx25_clk_90_shift		)	//25 Mhz Eth shift out tx clock
+	,.locked	(  )
 );
+
+//--------------------------------------------------------------------------------//
+//									ALTERA TX CLOCK CONTROL									 		 //
+//--------------------------------------------------------------------------------//
+always @(posedge pll_62_5m_clk)
+	if (!rst_n)				clk_sel_r <= 1'b0;
+	else 						clk_sel_r <= miistat_r18[1:0] == 2'b01;
+
+//assign mac_tx_clk_90_shift = mac_tx125_clk_90_shift;
+assign mac_tx_clk				= clk_sel_r ?	mac_tx25_clk				: mac_tx125_clk;
+assign mac_tx_clk_90_shift	= clk_sel_r ?	mac_tx25_clk_90_shift	: mac_tx125_clk_90_shift;
+
+/*
+altclkctrl	altclkctrl_tx(
+		.inclk1x		(	mac_tx25_clk				)
+		,.inclk0x	(	mac_tx125_clk				)
+		,.clkselect	(	clk_sel						)
+		,.outclk		(	mac_tx_clk					)
+	);
+
+altclkctrl	altclkctrl_tx_shift(
+		.inclk1x		(	mac_tx25_clk_90_shift	)
+		,.inclk0x	(	mac_tx125_clk_90_shift	)
+		,.clkselect	(	clk_sel						)
+		,.outclk		(	mac_tx_clk_90_shift		)
+	);*/
+	
+	
 
 //--------------------------------------------------------------------------------//
 //									OPENCORES MAC CONTROLLER										 //
@@ -288,10 +348,10 @@ MAC_top MAC_top
 	,.Tx_er				(		mac_txer				)
 	,.Tx_en				(		mac_txen				)
 	,.Txd					(		mac_txd				)
-	,.Rx_er				(		1'b0					)
+	,.Rx_er				(		err_to_mac			)								//!!!!!
 	,.Rx_dv				(		dv_to_mac			)
 	,.Rxd					(		data_to_mac			)
-	,.Crs					(		1'b0					)	//(mac_crs),
+	,.Crs					(		rxcrs_to_mac		)	//(mac_crs),			//!!!!!
 	,.Col					(		col_to_mac[2]		)
 
 	//HOST INTERFACE
@@ -308,6 +368,7 @@ MAC_top MAC_top
 	,.Mdc					(		Mdc					)     // MII Management Data Clock       
 
 	//ADD BY EKADATSKII
+	,.miistat_r18_o	(		miistat_r18			)
 	,.btn1				(		Btn3					)
 	,.btn2				(		Btn4					)
 	,.btn3				(		Btn5					)
@@ -340,30 +401,31 @@ assign  Mdio=MdoEn?Mdo:1'bz;
     (
       .aclr (),            
       .datain (rgmii_rx_ctl),
-      .dataout_h (rgmii_ctl_pos_w),	//rx_err
-      .dataout_l (rgmii_ctl_neg_w),	//rx_dv
+      .dataout_h (rgmii_ctl_pos_w),	//rx_dv
+      .dataout_l (rgmii_ctl_neg_w),	//rx_err
       .inclock (rgmii_rx_clk)
     );
 	 
 //DATA & DV FROM RGMII(POS/NEG)
 //---------------------------------
 always @(posedge rgmii_rx_clk)
-	begin
+	if (!clk_sel_r) begin 
 		rgmii_pos			<= rgmii_pos_w;
 		rgmii_pos_r			<= rgmii_pos;
 	end
 always @(posedge rgmii_rx_clk)
-	begin
+	if (!clk_sel_r) begin
 		rgmii_neg			<= rgmii_neg_w;
 		rgmii_neg_r 		<= rgmii_neg;
 	end
 always @(posedge rgmii_rx_clk)
-	begin
+	if (!clk_sel_r) begin
 		rgmii_ctl_pos		<= rgmii_ctl_pos_w;
 		rgmii_ctl_pos_r	<= rgmii_ctl_pos;
+		rgmii_ctl_pos_rr	<= rgmii_ctl_pos_r;
 	end
 always @(posedge rgmii_rx_clk)
-	begin
+	if (!clk_sel_r) begin
 		rgmii_ctl_neg		<= rgmii_ctl_neg_w;
 		rgmii_ctl_neg_r	<= rgmii_ctl_neg;
 	end
@@ -371,27 +433,31 @@ always @(posedge rgmii_rx_clk)
 //DATA FROM 2->1 FLOW
 always @(posedge rgmii_rx_clk or negedge rst_n)
 	if (!rst_n) rxdat_to_mac <= 8'b0;
-	else begin
+	else if (!clk_sel_r) begin
 					rxdat_to_mac[11:8] <= rgmii_ctl_neg_r ? rxdat_to_mac[ 3:0] : 4'b0;
 					rxdat_to_mac[ 7:4] <= rgmii_ctl_neg_r ? rgmii_neg_r        : 4'b0;
 					rxdat_to_mac[ 3:0] <= rgmii_ctl_pos_r ? rgmii_pos_r        : 4'b0;
 		  end
+	else if (clk_sel_r) begin
+					rxdat_to_mac[ 7:4] <= rgmii_ctl_neg_r ? rxdat_to_mac[ 3:0] : 4'b0;
+					rxdat_to_mac[ 3:0] <= rgmii_ctl_neg_r ? rgmii_neg_r		  : 4'b0;
+			end
 
 //DV REG
 always @(posedge rgmii_rx_clk or negedge rst_n)
-	if (!rst_n) rxdv_to_mac <= 1'b0;
-	else			rxdv_to_mac <= rgmii_ctl_neg_r;
+	if (!rst_n) 			rxdv_to_mac <= 1'b0;
+	else if (!clk_sel_r)	rxdv_to_mac <= rgmii_ctl_pos_rr;
 
 //DV TO MAC CONTROLLER
 assign dv_to_mac = rxdv_to_mac;
 
 //ERR REG
 always @(posedge rgmii_rx_clk or negedge rst_n)
-	if (!rst_n) rxerr_to_mac <= 1'b0;
-	else			rxerr_to_mac <= rgmii_ctl_pos_r;
+	if (!rst_n) 			rxerr_to_mac <= 1'b0;
+	else if (!clk_sel_r)	rxerr_to_mac <= rgmii_ctl_neg_r;
 	
 //ERR TO MAC CONTROLLER
-assign err_to_mac = rxerr_to_mac;
+assign err_to_mac = rxerr_to_mac ^ rxdv_to_mac;
 
 //CRS
 always @(dv_to_mac or err_to_mac or data_to_mac)
@@ -504,8 +570,32 @@ network_layer network_layer
 	,.pseudo_crc_sum_o(	nl_pseudo_crc		)
 );
 
+//ARP RECEIVER
+arp_receiver arp_receiver
+(
+	.clk					(	pll_62_5m_clk		)
+	,.rst_n				(	rst_n					)
+	,.dev_ip_addr_i	(	DEV_IP_ADDR			)
+	
+	,.rcv_op_st_i		(	dl_up_op_st			)
+	,.rcv_op_i			(	dl_up_op				)
+	,.rcv_op_end_i		(	dl_up_op_end		)
+	,.rcv_data_i		(	dl_up_data			)
+	
+	,.source_addr_i	(	dl_source_addr		)
+	,.dest_addr_i		(	dl_dest_addr		)
+	,.prot_type_i		(	dl_prot_type		)
+	
+	,.sender_haddr_o	(	arp_src_haddr		)
+	,.sender_paddr_o	(	arp_src_paddr		)
+	,.target_haddr_o	(	arp_dst_haddr		)
+	,.target_paddr_o	(	arp_dst_paddr		)
+	,.op_cmplt_o		(	arp_op_cmplt		)
+);
+
 //READ DATA TRANSPORT LAYER(IP)
 //--------------------------------------------------
+//TCP RECEIVER
 transport_layer transport_layer
 (
 	.clk					(	pll_62_5m_clk	)
@@ -541,6 +631,53 @@ transport_layer transport_layer
 	,.crc_check_o		(	tl_crc_check		)
 
 );
+/*
+udp_receiver udp_receiver
+(
+	.clk					(	pll_62_5m_clk	)
+	,.rst_n				(	rst_n				)
+	,.dev_ip_addr_i	(	DEV_IP_ADDR		)
+
+	,.rcv_op_st_i		(	nl_up_op_st		)
+	,.rcv_op_i			(	nl_up_op			)
+	,.rcv_op_end_i		(	nl_up_op_end	)
+	,.rcv_data_i		(	nl_up_data		)
+	,.src_ip_addr_i	(	nl_source_addr	)
+	,.dst_ip_addr_i	(	nl_dest_addr	)
+	,.prot_type_i		(	nl_prot_type	)
+	,.pseudo_crc_sum_i(	nl_pseudo_crc	)
+
+	,.source_port_o	(	udp_up_src_port)
+	,.dest_port_o		(	udp_up_dst_port)
+	,.packet_length_o	()
+	,.checksum_o		()
+
+	,.upper_op_st		(	udp_up_op_st	)
+	,.upper_op			(	udp_up_op		)
+	,.upper_op_end		(	udp_up_op_end	)
+	,.upper_data		(	udp_up_data		)
+	,.crc_sum_o			(	udp_crc_sum		)
+	,.crc_check_o		(	udp_crc_check	)
+);
+
+//APPLICATION LAYER
+//--------------------------------------------------
+dhcp_receiver dhcp_receiver
+(
+	.clk					(	pll_62_5m_clk	)
+	,.rst_n				(	rst_n				)
+	
+	,.rcv_op_st_i		(	udp_up_op_st	)
+	,.rcv_op_i			(	udp_up_op		)
+	,.rcv_op_end_i		(	udp_up_op_end	)
+	,.rcv_data_i		(	udp_up_data		)
+	,.source_port_i	(	udp_up_src_port)
+	,.dest_port_i		(	udp_up_dst_port)
+	
+
+);*/
+
+
 	
 //CONTROLS TO CHECK CRC AND SEQ_NUM OF TCP RECEIVER DATA
 //*****************************************************************
@@ -597,6 +734,8 @@ assign tcp_ram_wr_end = tcp_state_estblsh_o & tl_up_op & tl_up_op_end &
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
 					tcp_ram_wr_addr_r <= 0;
+	else if (!tcp_state_estblsh_o)
+					tcp_ram_wr_addr_r <= 0;
 	else if (tcp_ram_wr_end & (!tl_crc_check | packet_drop | tl_flags[2]))
 					tcp_ram_wr_addr_r <= tcp_ram_wr_addr_checked_r;
 	else if (tcp_ram_wr)
@@ -605,6 +744,8 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //WRITE TO TCP RAM CHECKED DATA
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
+					tcp_ram_wr_addr_checked_r <= 0;
+	else if (!tcp_state_estblsh_o)
 					tcp_ram_wr_addr_checked_r <= 0;
 	else if (tcp_ram_wr_end & (tl_crc_check & !packet_drop & !tl_flags[2]))
 					tcp_ram_wr_addr_checked_r <= tcp_ram_wr_addr_r + tcp_ram_wr;
@@ -619,6 +760,8 @@ assign tcp_ram_rd = tcp_ram_rd_addr_r != tcp_ram_wr_addr_checked_r;
 //RAM READ ADDRESS
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)
+					tcp_ram_rd_addr_r <= 0;
+	else if (!tcp_state_estblsh_o)
 					tcp_ram_rd_addr_r <= 0;
 	else if (tcp_ram_rd)
 					tcp_ram_rd_addr_r <= tcp_ram_rd_addr_r + 1'b1;
@@ -692,6 +835,7 @@ wire	[ 3:0]	usb_dec_next_2;
 usb_prot_decoder usb_prot_decoder_0 (
 	.clk						(	pll_62_5m_clk			)
 	,.rst_n					(	rst_n						)
+	,.rcv_off				(	!tcp_state_estblsh_o	)
 	
 	,.main_i					(	1'b1						)
 	,.clr_i					(	usb_dec_run_2			)
@@ -716,6 +860,7 @@ usb_prot_decoder usb_prot_decoder_0 (
 usb_prot_decoder usb_prot_decoder_1 (
 	.clk						(	pll_62_5m_clk			)
 	,.rst_n					(	rst_n						)
+	,.rcv_off				(	!tcp_state_estblsh_o	)	
 	
 	,.main_i					(	1'b0						)
 	,.clr_i					(	usb_dec_run_0			)
@@ -740,6 +885,7 @@ usb_prot_decoder usb_prot_decoder_1 (
 usb_prot_decoder usb_prot_decoder_2 (
 	.clk						(	pll_62_5m_clk			)
 	,.rst_n					(	rst_n						)
+	,.rcv_off				(	!tcp_state_estblsh_o	)	
 	
 	,.main_i					(	1'b0						)
 	,.clr_i					(	usb_dec_run_1			)
@@ -804,6 +950,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //USB DECODER BYTE COUNTER
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)								usb_dec_byte_cnt <= 0;
+	else if (!tcp_state_estblsh_o)	usb_dec_byte_cnt <= 0;	
 	else if (usb_dec_trsmt_cmplt)		usb_dec_byte_cnt <= 0;
 	else if (usb_dec_dat_en)			usb_dec_byte_cnt <= usb_dec_byte_cnt + 1;
 
@@ -824,8 +971,8 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //USB DECODER PACKET ERROR
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)																					usb_pkt_num_err <= 0;
+	else if (!tcp_state_estblsh_o)														usb_pkt_num_err <= 0;	
 	else if (usb_dec_trsmt_cmplt & (usb_dec_pkt_num != usb_dec_pkt_cnt))		usb_pkt_num_err <= 1;
-	else if (!tcp_state_estblsh_o)														usb_pkt_num_err <= 0;
 	
 //USB CRC AND PACKET INCREMENT ERROR REGS FOR TEST
 //***********************************************************************************
@@ -863,9 +1010,9 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 //USED TO COLLECT SEVERAL PACKET CONTROL INFORMATION IF CONTROLLER BUSY WITH SEND
 wire	[15:0]	tcp_data_len_i = nl_up_data_len - (tl_head_len*4);
 wire				ctrl_fifo_wr = tl_up_op_end & tl_crc_check & !fifo_ctrl_full & (tl_dst_port == TCP_LOCAL_PORT);
-wire	[133:0]	ctrl_fifo_i = {tl_dst_port, tl_src_port, tcp_data_len_i[15:0], tl_flags[5:0], tl_window[15:0], tl_seq_num[31:0], tl_ack_num[31:0]};
+wire	[213:0]	ctrl_fifo_i = {dl_source_addr, nl_source_addr, tl_dst_port, tl_src_port, tcp_data_len_i[15:0], tl_flags[5:0], tl_window[15:0], tl_seq_num[31:0], tl_ack_num[31:0]};
 
-umio_fifo #(16, 134) fifo_ctrl
+umio_fifo #(8, 214) fifo_ctrl
 (
 	.rst_n					(	rst_n					)
 	,.clk						(	pll_62_5m_clk		)
@@ -877,7 +1024,9 @@ umio_fifo #(16, 134) fifo_ctrl
 	,.empty					(	fifo_ctrl_empty	)
 );
 
-wire	[133:0]		ctrl_fifo_o;
+wire	[213:0]		ctrl_fifo_o;
+wire	[47:0]		eth_source_addr_ii	= ctrl_fifo_o[213:166];
+wire	[31:0]		ip_source_addr_ii		= ctrl_fifo_o[165:134];
 wire	[15:0]		tcp_dest_port_ii		= ctrl_fifo_o[133:118];
 wire	[15:0]		tcp_source_port_ii	= ctrl_fifo_o[117:102]; 	
 wire	[15:0]		tcp_data_len_ii		= ctrl_fifo_o[101:86]; 
@@ -901,6 +1050,12 @@ tcp_controller	#(WRAM_NUM, TCP_LOCAL_PORT) tcp_controller
 	.clk							(		pll_62_5m_clk				)
 	,.rst_n						(		rst_n							)
 	
+	//ETH FRAME INPUT PARAMETERS 
+	,.eth_src_addr_i			(		eth_source_addr_ii		)
+	
+	//INPUT PARAMETERS FROM IP
+	,.ip_src_addr_i			(		ip_source_addr_ii			)
+	
 	//INPUT PARAMETERS FROM TCP RECEIVED PACKET
 	,.tcp_op_rcv_i				(		!fifo_ctrl_empty			)
 	,.tcp_source_port_i		(		tcp_source_port_ii		)
@@ -922,6 +1077,8 @@ tcp_controller	#(WRAM_NUM, TCP_LOCAL_PORT) tcp_controller
 	
 
 	//OUTPUT PARAMETERS TO SEND TCP PACKET
+	,.eth_dst_addr_o			(		eth_dest_addr_o			)
+	,.ip_dst_addr_o			(		ip_dest_addr_o				)
 	,.tcp_source_port_o		(		tcp_source_port_o			)
 	,.tcp_dest_port_o			(		tcp_dest_port_o			)
 	,.tcp_flags_o				(		tcp_flags_o					)
@@ -934,7 +1091,7 @@ tcp_controller	#(WRAM_NUM, TCP_LOCAL_PORT) tcp_controller
 	,.tcp_wdat_stop_i			(		tcp_eop						)
 	,.tcp_options_len_i		(		tcp_options_len			)
 	,.tcp_seq_num_next_o		(		tcp_seq_num_next			)
-	,.trnsmt_busy_i			(		tcp_controller_busy		)
+	,.trnsmt_busy_i			(		tcp_bus_busy				)
 	,.tcp_state_listen_o		(		tcp_ctrl_state_idle		)
 	,.tcp_state_estblsh_o	(		tcp_state_estblsh_o		)
 	
@@ -959,10 +1116,10 @@ wire	[ 2: 0]	ip_flag				= 3'h0;
 wire	[13: 0]	ip_frag_offset		= 13'h00_00;		
 wire	[ 7: 0]	ip_ttl				= 8'h80;				
 wire	[ 7: 0]	ip_prot				= 8'h06;				//TCP
-wire	[31: 0]	ip_dst_addr			= 32'hC1_E8_1A_4F;//DENIS//32'hC1_E8_1A_64;
+//wire	[31: 0]	ip_dst_addr			= 32'hC1_E8_1A_4F;//DENIS//32'hC1_E8_1A_64;
 wire	[31: 0]	ip_options			= 32'h00_00_00_00;		//Not used now
 
-wire	[15: 0]	tcp_window			= 16'd40000;				//TODO change size
+wire	[15: 0]	tcp_window			= 16'd64000;				//TODO change size
 wire	[15: 0]	tcp_urgent_ptr		= 16'h0000;
 wire	[15: 0]	tcp_max_seg_size	= 16'd1460;
 wire	[ 7: 0]	tcp_window_scale	= 8'h00;
@@ -976,6 +1133,8 @@ wire	[95: 0]	tcp_options			= {16'h0204,
 												8'h01, 
 												8'h01, 
 												16'h0000}; //16'h0402 SACK OPTION
+wire	[47: 0]	eth_dest_addr_o;
+wire	[31: 0]	ip_dest_addr_o;												
 wire	[15: 0]	tcp_source_port_o;
 wire	[15: 0]	tcp_dest_port_o;
 wire	[31: 0]	tcp_seq_num_o;
@@ -1491,7 +1650,8 @@ assign tcp_seq_num_mux		=	tcp_ctrl_data_flg ?	wram_seq_num :
 //TCP TRANSMITTER																	
 //*******************************************************************************
 //*******************************************************************************
-wire tcp_controller_busy = tcp_run | tcp_start | transmitter_work;
+wire tcp_bus_busy = tcp_run | tcp_start | transmitter_work | arp_transmitter_work;
+wire tcp_controller_work = tcp_run | tcp_start | transmitter_work;
 
 tcp_transmitter tcp_transmitter
 (
@@ -1514,7 +1674,7 @@ tcp_transmitter tcp_transmitter
 	//---------------------------------------
 	//MAC
 	,.mac_src_addr			(	DEV_MAC_ADDR	)
-	,.mac_dst_addr			(	DEST_MAC_ADDR	)
+	,.mac_dst_addr			(	eth_dest_addr_o)
 	,.mac_type				(	mac_type			)
 
 	//---------------------------------------
@@ -1528,9 +1688,8 @@ tcp_transmitter tcp_transmitter
 	,.ip_frag_offset		(	ip_frag_offset	)
 	,.ip_ttl					(	ip_ttl			)
 	,.ip_prot				(	ip_prot			)
-//	,.ip_head_chksum		(	ip_head_chksum	)
 	,.ip_src_addr			(	DEV_IP_ADDR		)
-	,.ip_dst_addr			(	ip_dst_addr		)
+	,.ip_dst_addr			(	ip_dest_addr_o	)
 	,.ip_options			(	ip_options		)
 	
 	//---------------------------------------	
@@ -1550,26 +1709,411 @@ tcp_transmitter tcp_transmitter
 	,.work_o					(	transmitter_work	)
 );
 
-/*
+//ARP TRANSMITTER
+//*******************************************************************************
+//*******************************************************************************
+wire	[47:0]	arp_sender_haddr		= DEV_MAC_ADDR;
+wire	[31:0]	arp_sender_paddr		= DEV_IP_ADDR;
+wire	[15:0]	arp_mac_type			= 16'h0806; //ARP
+wire	[15:0]	arp_hardw_type			= 16'h0001; //Ethernet
+wire	[15:0]	arp_prot_type			= 16'h0800; //IPv4
+wire	[ 7:0]	arp_hardw_length		= 8'h06;
+wire	[ 7:0]	arp_prot_length		= 8'h04;
+
+wire	[31:0]	arp_data_o;
+wire	[1:0]		arp_be_o;
+wire 				arp_data_rdy_o;
+wire				arp_data_out_rd;
+wire				arp_sop;
+wire				arp_eop;
+
+reg				arp_start;
+reg				arp_run;
+reg	[47:0]	arp_mac_src_addr;
+reg	[47:0]	arp_mac_dst_addr;
+reg	[47:0]	arp_target_haddr;
+reg	[31:0]	arp_target_paddr;
+reg	[15:0]	arp_op_code;
+reg				arp_cnt;
+
+//ARP START
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)													arp_start <= 1'b0;
+	else if (arp_start | arp_run)							arp_start <= 1'b0;
+//	else if (arp_timer_pas)									arp_start <= 1'b1;
+	else if (arp_op_cmplt & !tcp_controller_work)	arp_start <= 1'b1;
+	
+//ARP RUN
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)					arp_run <= 1'b0;
+	else if (arp_eop)			arp_run <= 1'b0;
+	else if (arp_start)		arp_run <= 1'b1;
+	
+//ARP COUNTER
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)														arp_cnt <= 1'b0;
+	else if (arp_timer_pas & !arp_start & !arp_run)		arp_cnt <= arp_cnt + 1'b1;
+	
+//ARP MAC DESTINATION ADDRESS
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)														arp_mac_src_addr <= DEV_MAC_ADDR;
+//	else if (arp_timer_pas & !arp_run & !arp_start)		arp_mac_src_addr <= DEV_MAC_ADDR;
+	else if (arp_op_cmplt & !arp_run & !arp_start)		arp_mac_src_addr <= DEV_MAC_ADDR;
+	
+//ARP MAC SOURCE ADDRESS
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)														arp_mac_dst_addr <= 48'hFFFF_FFFF_FFFF;
+//	else if (arp_timer_pas & !arp_run & !arp_start)		arp_mac_dst_addr <= 48'hFFFF_FFFF_FFFF;
+	else if (arp_op_cmplt & !arp_run & !arp_start)		arp_mac_dst_addr <= arp_src_haddr;
+
+//ARP TARGET HARDWARE ADDRESS
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)														arp_target_haddr <= 48'h0000_0000_0000;
+//	else if (arp_timer_pas & !arp_run & !arp_start)		arp_target_haddr <= 48'h0000_0000_0000;
+	else if (arp_op_cmplt & !arp_run & !arp_start)		arp_target_haddr <= arp_src_haddr;
+	
+//ARP TARGET PROTOCOL ADDRESS			DEV_IP_ADDR
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)																		arp_target_paddr <= DEV_IP_ADDR;
+//	else if (arp_timer_pas & !arp_run & !arp_start /*& !arp_cnt*/)		arp_target_paddr <= 32'hC0_A8_01_01;
+	else if (arp_op_cmplt & !arp_run & !arp_start)						arp_target_paddr <= 32'hC0_A8_01_01;//arp_src_paddr;
+
+//ARP OPERATION CODE
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)														arp_op_code <= 16'h0001;	//REQUEST
+//	else if (arp_timer_pas & !arp_run & !arp_start)		arp_op_code <= 16'h0001;	//RESPONSE
+	else if (arp_op_cmplt & !arp_run & !arp_start)		arp_op_code <= 16'h0002;	//RESPONSE
+
+//ARP TRANSMITTER	
+arp_transmitter	arp_transmitter
+(
+	.clk						(	pll_62_5m_clk	)
+	,.rst_n					(	rst_n				)
+	
+	//control signals
+	,.start					(	arp_start		)
+	
+	//output data + controls
+	,.data_out				(	arp_data_o		)
+	,.be_out					(	arp_be_o			)
+	,.data_out_rdy			(	arp_data_rdy_o	)
+	,.data_out_rd			(	arp_data_out_rd)
+	,.sop						(	arp_sop			)
+	,.eop						(	arp_eop			)
+	
+	//
+	,.mac_src_addr			(	arp_mac_src_addr	)
+	,.mac_dst_addr			(	arp_mac_dst_addr	)
+	,.mac_type				(	arp_mac_type		)
+	
+	//input parameters
+	,.hardw_type			(	arp_hardw_type		)
+	,.prot_type				(	arp_prot_type		)
+	,.hardw_length			(	arp_hardw_length	)
+	,.prot_length			(	arp_prot_length	)
+	,.operation_code		(	arp_op_code			)
+	
+	,.sender_haddr			(	arp_sender_haddr	)
+	,.sender_paddr			(	arp_sender_paddr	)
+	,.target_haddr			(	arp_target_haddr	)
+	,.target_paddr			(	arp_target_paddr	)
+);
+
+//TIMER
+reg	[31:0]	arp_timer_reg;
+wire				arp_timer_pas;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)													arp_timer_reg <= 32'd50_000_000;
+	else if (arp_eop)											arp_timer_reg <= 32'd50_000_000;
+	else if (!arp_timer_pas)								arp_timer_reg <= arp_timer_reg - 1'b1;
+
+assign arp_timer_pas = arp_timer_reg == 0;
+
+wire arp_transmitter_work = arp_run | arp_start | arp_op_cmplt;
+
+
+`ifdef ROUTER_ENABLE
+//UDP TRANSMITTER
+//*******************************************************************************
+//*******************************************************************************
+//FOR INITIAL DHCP PACKET SEND
+
+//DHCP PACKET GENERATE PROCESS
+
+parameter		UDP_DATA_LENGTH_IN_BYTE = 16'd322;		//DHCP REQUEST
+//parameter		UDP_DATA_LENGTH_IN_BYTE = 16'd300;		//DHCP DISCOVER
+//ip length(20) + udp header length(8)
+wire	[15:0]	udp_ip_total_len		= 16'd20 + 16'd8 + UDP_DATA_LENGTH_IN_BYTE;
+wire	[ 7: 0]	udp_prot					= 8'h11;
+wire				udp_eop;
+reg				udp_gen_start;
+reg				udp_gen_lock;
+reg				udp_gen_run;
+reg				udp_start;
+reg				udp_start_lock;
+reg	[15:0]	udp_content_chkr;
+reg	[31:0]	udp_data_gen;
+wire	[31:0]	udp_fifo_rdata;
+wire				udp_data_in_rd;
+
+
+wire				udp_data_out_rd;
+wire	[31:0]	udp_data_chksum_w;
+wire	[31:0]	udp_data_chksum_ww;
+wire	[15:0]	udp_data_chksum;
+reg	[15:0]	udp_data_chksum_r;
+wire	[31:0]	udp_data_o;
+wire	[1:0]		udp_be_o;
+wire 				udp_data_rdy_o;
+wire				udp_sop;
+
+
+wire				udp_fifo_data_wr;
+reg	[15:0]	udp_fifo_data_wr_chkr;
+
+//TIMER
+reg	[31:0]	udp_timer_reg;
+wire				udp_timer_pas;
+
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)													udp_timer_reg <= 32'd1000_000_000;
+	else if (udp_eop)											udp_timer_reg <= 32'd1000_000_000;
+	else if (!udp_timer_pas)								udp_timer_reg <= udp_timer_reg - 1'b1;
+	
+assign udp_timer_pas = udp_timer_reg == 0;
+
+//------------------------------------------------------------------------------------------------------------
+
+//START AFTER WAIT
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 										udp_gen_start <= 1'b0;
+	else if (udp_gen_start)							udp_gen_start <= 1'b0;
+	else if (udp_timer_pas & !udp_gen_lock)	udp_gen_start <= 1'b1;
+	
+//START LOCK
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 										udp_gen_lock <= 1'b0;
+	else if (udp_eop)									udp_gen_lock <= 1'b0;
+	else if (udp_timer_pas)							udp_gen_lock <= 1'b1;
+	
+//RUN DATA SEND TO FIFO
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 										udp_gen_run <= 1'b0;
+	else if (udp_eop)									udp_gen_run <= 1'b0;
+	else if (udp_gen_start)							udp_gen_run <= 1'b1;
+	
+assign udp_fifo_data_wr = udp_gen_run & (udp_fifo_data_wr_chkr < UDP_DATA_LENGTH_IN_BYTE);
+
+//UDP DATA SEND TO FIFO COUNTER
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 										udp_fifo_data_wr_chkr <= 16'b0;
+	else if (udp_eop)									udp_fifo_data_wr_chkr <= 16'b0;
+	else if (udp_fifo_data_wr)						udp_fifo_data_wr_chkr <= udp_fifo_data_wr_chkr + 4'd4;
+	
+//START SEND DATA FROM FIFO TO UDP TRANSMITTER
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 										udp_start <= 1'b0;
+	else if (udp_start)								udp_start <= 1'b0;
+	else if ((udp_fifo_data_wr_chkr >= UDP_DATA_LENGTH_IN_BYTE) & !udp_start_lock)	
+															udp_start <= 1'b1;	
+//START LOCK
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 										udp_start_lock <= 1'b0;
+	else if (udp_eop)									udp_start_lock <= 1'b0;
+	else if (udp_fifo_data_wr_chkr >= UDP_DATA_LENGTH_IN_BYTE)
+															udp_start_lock <= 1'b1;
+
+//UDP PACKET NUMBER OR UDP DATA SELECTOR
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)
+					udp_content_chkr <= 16'd0;
+	else if (udp_eop & udp_data_out_rd)
+					udp_content_chkr <= 16'd0;
+	else if (udp_fifo_data_wr)
+					udp_content_chkr <= udp_content_chkr + 1'b1;	
+			
+/*			
+//DHCP DISCOVER
+//UDP DATA GENERATOR				
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)	
+					udp_data_gen <= 32'h01010600;
+	else if (udp_gen_start)					
+					udp_data_gen <= 32'h01010600;
+	else if ((udp_content_chkr == 16'd0) & udp_fifo_data_wr)
+					udp_data_gen <= 32'hBF734D1D;
+	else if ((udp_content_chkr == 16'd1) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd2) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;	
+	else if ((udp_content_chkr == 16'd3) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd4) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd5) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd6) & udp_fifo_data_wr)
+					udp_data_gen <= DEV_MAC_ADDR[47:16];
+	else if ((udp_content_chkr == 16'd7) & udp_fifo_data_wr)
+					udp_data_gen <= {DEV_MAC_ADDR[15:0], 16'h0000};
+	else if ((udp_content_chkr == 16'd8) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr >= 16'd9) & ((udp_content_chkr < 4'd58)) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd58) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h63825363;
+	else if ((udp_content_chkr == 16'd59) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h3501013D;
+	else if ((udp_content_chkr == 16'd60) & udp_fifo_data_wr)
+					udp_data_gen <= {16'h0701, DEV_MAC_ADDR[47:32]};
+	else if ((udp_content_chkr == 16'd61) & udp_fifo_data_wr)
+					udp_data_gen <= DEV_MAC_ADDR[31:0];
+	else if ((udp_content_chkr == 16'd62) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h0C0F4445;
+	else if ((udp_content_chkr == 16'd63) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h534B544F;
+	else if ((udp_content_chkr == 16'd64) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h502D484E;
+	else if ((udp_content_chkr == 16'd65) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h4E464553;
+	else if ((udp_content_chkr == 16'd66) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h523c084d;							//52(было 50)
+	else if ((udp_content_chkr == 16'd67) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h53465420;
+	else if ((udp_content_chkr == 16'd68) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h352E3037;
+	else if ((udp_content_chkr == 16'd69) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h0E010306;										
+	else if ((udp_content_chkr == 16'd70) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h0F1F212B;
+	else if ((udp_content_chkr == 16'd71) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h2C2E2F77;
+	else if ((udp_content_chkr == 16'd72) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h79F9FCFF;
+	else if ((udp_content_chkr == 16'd73) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd74) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+*/
+
+//DHCP REQUEST
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)	
+					udp_data_gen <= 32'h01010600;
+	else if (udp_gen_start)
+					udp_data_gen <= 32'h01010600;
+	else if ((udp_content_chkr == 16'd0) & udp_fifo_data_wr)
+					udp_data_gen <= 32'hBF734D1D;
+	else if ((udp_content_chkr == 16'd1) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd2) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;	
+	else if ((udp_content_chkr == 16'd3) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd4) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd5) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd6) & udp_fifo_data_wr)
+					udp_data_gen <= DEV_MAC_ADDR[47:16];
+	else if ((udp_content_chkr == 16'd7) & udp_fifo_data_wr)
+					udp_data_gen <= {DEV_MAC_ADDR[15:0], 16'h0000};
+	else if ((udp_content_chkr == 16'd8) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr >= 16'd9) & ((udp_content_chkr < 4'd58)) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h00000000;
+	else if ((udp_content_chkr == 16'd58) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h63825363;
+	else if ((udp_content_chkr == 16'd59) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h3501033D;
+	else if ((udp_content_chkr == 16'd60) & udp_fifo_data_wr)
+					udp_data_gen <= {16'h0701, DEV_MAC_ADDR[47:32]};
+	else if ((udp_content_chkr == 16'd61) & udp_fifo_data_wr)
+					udp_data_gen <= DEV_MAC_ADDR[31:0];
+	else if ((udp_content_chkr == 16'd62) & udp_fifo_data_wr)
+					udp_data_gen <= {16'h3204, DEV_IP_ADDR[31:16]};
+	else if ((udp_content_chkr == 16'd63) & udp_fifo_data_wr)
+					udp_data_gen <= {DEV_IP_ADDR[15:0], 16'h0C0F};
+	else if ((udp_content_chkr == 16'd64) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h4445534B;
+	else if ((udp_content_chkr == 16'd65) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h544F502D;
+	else if ((udp_content_chkr == 16'd66) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h484E4E46;
+	else if ((udp_content_chkr == 16'd67) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h45535251;								//52(было 50)
+	else if ((udp_content_chkr == 16'd68) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h12000000;
+	else if ((udp_content_chkr == 16'd69) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h4445534B;
+	else if ((udp_content_chkr == 16'd70) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h544F502D;										
+	else if ((udp_content_chkr == 16'd71) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h484E4E46;
+	else if ((udp_content_chkr == 16'd72) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h4553523C;								//52(было 50)
+	else if ((udp_content_chkr == 16'd73) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h084D5346;
+	else if ((udp_content_chkr == 16'd74) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h5420352E;
+	else if ((udp_content_chkr == 16'd75) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h30370E01;
+	else if ((udp_content_chkr == 16'd76) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h03060F1F;
+	else if ((udp_content_chkr == 16'd77) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h212B2C2E;	
+	else if ((udp_content_chkr == 16'd78) & udp_fifo_data_wr)
+					udp_data_gen <= 32'h2F7779F9;	
+	else if ((udp_content_chkr == 16'd79) & udp_fifo_data_wr)
+					udp_data_gen <= 32'hFCFF0000;		
+	
+				
+//UDP DATA CRC
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)							udp_data_chksum_r <= 16'b0;
+	else if (udp_fifo_data_wr)		udp_data_chksum_r <= udp_data_chksum;
+	
+assign udp_data_chksum_w =	(udp_fifo_data_wr_chkr + 4'd1 == UDP_DATA_LENGTH_IN_BYTE) ? {udp_data_gen[31:24], 8'h00} : 
+									(udp_fifo_data_wr_chkr + 4'd2 == UDP_DATA_LENGTH_IN_BYTE) ?  udp_data_gen[31:16] : 
+									(udp_fifo_data_wr_chkr + 4'd3 == UDP_DATA_LENGTH_IN_BYTE) ? (udp_data_gen[31:16] + {udp_data_gen[15:8], 8'h00}) : (udp_data_gen[31:16] + udp_data_gen[15:0]);
+									
+assign udp_data_chksum_ww	= udp_data_chksum_w + udp_data_chksum_r[15:0];
+assign udp_data_chksum		= udp_data_chksum_ww[31:16] + udp_data_chksum_ww[15:0];
+
+
+//FIFO TO COLLECT UDP DATA	
+umio_fifo #(2048, 32) udp_fifo
+(
+	.rst_n					(	rst_n					)
+	,.clk						(	pll_62_5m_clk		)
+	,.rd_data				(	udp_fifo_rdata		)
+	,.wr_data				(	udp_data_gen		)
+	,.rd_en					(	udp_data_in_rd		)
+	,.wr_en					(	udp_fifo_data_wr	)
+	,.full					(							)
+	,.empty					(							)
+);
+
 udp_transmitter udp_transmitter
 (
 	.clk						(	pll_62_5m_clk	)
 	,.rst_n					(	rst_n				)
 	
 	//control signals
-	,.start					(	1'b0		)					//??????
+	,.start					(	udp_start		)	
 	
 	//output data + controls
 	
 	//output data + controls
-	,.data_out				(	udp_data_o		)			//??????
+	,.data_out				(	udp_data_o		)		
 	,.be_out					(	udp_be_o			)
 	,.data_out_rdy			(	udp_data_rdy_o	)
 	,.data_out_rd			(	udp_data_out_rd)
-	,.data_in				(	tcp_fifo_rdata	)
+	,.data_in				(	udp_fifo_rdata	)
 	,.data_in_rd			(	udp_data_in_rd	)
 	,.sop						(	udp_sop			)
-	,.eop						(	udp_eop			)			//??????
+	,.eop						(	udp_eop			)		
 	
 	//packet parameters
 	,.mac_src_addr			(	DEV_MAC_ADDR	)
@@ -1581,30 +2125,52 @@ udp_transmitter udp_transmitter
 	,.ip_version			(	ip_version		)
 	,.ip_head_len			(	ip_head_len		)
 	,.ip_dsf					(	ip_dsf			)
-	,.ip_total_len			(	16'd350			)
+	,.ip_total_len			(	udp_ip_total_len		)
 	,.ip_id					(	ip_id				)
 	,.ip_flag				(	ip_flag			)
 	,.ip_frag_offset		(	ip_frag_offset	)
 	,.ip_ttl					(	ip_ttl			)
-	,.ip_prot				(	ip_prot			)
-	,.ip_src_addr			(	16'h0000			)
-	,.ip_dst_addr			(	16'hffff			)
+	,.ip_prot				(	udp_prot			)
+	,.ip_src_addr			(	32'h00000000	)
+	,.ip_dst_addr			(	32'hFFFFFFFF	)
 	,.ip_options			(	ip_options		)
 	
 	//packet parameters
 	,.udp_src_port			(	16'd68			)
 	,.udp_dst_port			(	16'd67			)
-	,.udp_data_length		(	16'd330			)
-	,.udp_data_chksum		(	)								//??????
-);*/
-
+	,.udp_data_length		(	UDP_DATA_LENGTH_IN_BYTE			)
+	,.udp_data_chksum		(	udp_data_chksum_r	)
+);
+	
 //DATA FROM TCP TRANSMITTER TO ->FIFO->MAC
 //**********************************************************
+assign fifo4_wr_data_in		= arp_data_rdy_o ? {arp_be_o, arp_eop, arp_sop} : udp_data_rdy_o ? {udp_be_o, udp_eop, udp_sop} : {tcp_be_o, tcp_eop, tcp_sop};
+assign fifo32_wr_data_in	= arp_data_rdy_o ? arp_data_o : udp_data_rdy_o ? udp_data_o : tcp_data_o;
+assign fifo4_wr_write		= (tcp_data_rdy_o | udp_data_rdy_o | arp_data_rdy_o) & !fifo4_wr_full;
+assign fifo32_wr_write		= (tcp_data_rdy_o | udp_data_rdy_o | arp_data_rdy_o) & !fifo32_wr_full;
+assign tcp_data_out_rd		= tcp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;
+assign udp_data_out_rd		= udp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;
+assign arp_data_out_rd		= arp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;
+
+
+`else
+assign fifo4_wr_data_in		= arp_data_rdy_o ? {arp_be_o, arp_eop, arp_sop} : {tcp_be_o, tcp_eop, tcp_sop};
+assign fifo32_wr_data_in	= arp_data_rdy_o ? arp_data_o : tcp_data_o;
+assign fifo4_wr_write		= (tcp_data_rdy_o |  arp_data_rdy_o) & !fifo4_wr_full;
+assign fifo32_wr_write		= (tcp_data_rdy_o |  arp_data_rdy_o) & !fifo32_wr_full;
+assign tcp_data_out_rd		= tcp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;
+assign arp_data_out_rd		= arp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;
+/*
 assign fifo4_wr_data_in		= {tcp_be_o, tcp_eop, tcp_sop};
 assign fifo32_wr_data_in	= tcp_data_o;
 assign fifo4_wr_write		= tcp_data_rdy_o & !fifo4_wr_full;
 assign fifo32_wr_write		= tcp_data_rdy_o & !fifo32_wr_full;
-assign tcp_data_out_rd		= tcp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;
+assign tcp_data_out_rd		= tcp_data_rdy_o & !fifo4_wr_full & !fifo32_wr_full;*/
+`endif
+
+
+
+
 
 //RESYNC CONTROL WRITE FIFO(CONTROLLER TO MAC)
 fifo4 fifo4_write_ctl
@@ -1653,19 +2219,19 @@ reg	[ 7: 0]		mac_txd_rr;
 reg					mac_txen_r;
 reg					mac_txen_rr;
 
-always @(posedge mac_tx_clk_45_shift or negedge rst_n)
+always @(posedge mac_tx_clk or negedge rst_n)
 	if (!rst_n)		mac_txd_r <= 8'b0;
 	else 				mac_txd_r <= mac_txd;
 	
-always @(posedge mac_tx_clk_45_shift or negedge rst_n)
+always @(posedge mac_tx_clk or negedge rst_n)
 	if (!rst_n)		mac_txd_rr <= 8'b0;
 	else 				mac_txd_rr <= mac_txd_r;
 	
-always @(posedge mac_tx_clk_45_shift or negedge rst_n)
+always @(posedge mac_tx_clk or negedge rst_n)
 	if (!rst_n)		mac_txen_r <= 1'b0;
 	else 				mac_txen_r <= mac_txen;
 
-always @(posedge mac_tx_clk_45_shift or negedge rst_n)
+always @(posedge mac_tx_clk or negedge rst_n)
 	if (!rst_n)		mac_txen_rr <= 1'b0;
 	else 				mac_txen_rr <= mac_txen_r;
 	
@@ -1686,7 +2252,7 @@ altdio_out4 altdio_out4
       .aclr			(),
       .datain_h	(		mac_txd_rr[3:0]		),
       .datain_l	(		mac_txd_rr[7:4]		),
-      .outclock	(		mac_tx_clk_45_shift	),
+      .outclock	(		mac_tx_clk				),
       .dataout		(		rgmii_out4				)
     );
 altdio_out1 altdio_out1
@@ -1694,7 +2260,7 @@ altdio_out1 altdio_out1
       .aclr			(),
       .datain_h	(		mac_txen_rr				),
       .datain_l	(		mac_txen_rr				),
-      .outclock	(		mac_tx_clk_45_shift	),
+      .outclock	(		mac_tx_clk				),
       .dataout		(		rgmii_out1				)
     );
 
@@ -1729,7 +2295,7 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 
 //INOUTS
 //*******************************************
-assign rgmii_tx_clk	= clk_125;
+assign rgmii_tx_clk	= mac_tx_clk_90_shift;
 assign rgmii_txd		= iobuf_dat_to_phy;
 assign rgmii_tx_ctl	= iobuf_ctl_to_phy;
 assign User_led1		= !led_on;	

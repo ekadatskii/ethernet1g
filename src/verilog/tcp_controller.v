@@ -4,6 +4,12 @@ module tcp_controller #(parameter MEMORY_NUM, parameter LOCAL_PORT)
 	input						clk
 	,input					rst_n
 
+	//ETH FRAME INPUT PARAMETERS 
+	,input	[47:0]		eth_src_addr_i
+	
+	//INPUT PARAMETERS FROM IP
+	,input	[31:0]		ip_src_addr_i
+	
 	//INPUT PARAMETERS FROM TCP RECEIVED PACKET
 	,input					tcp_op_rcv_i
 	,input	[15:0]		tcp_source_port_i
@@ -24,6 +30,8 @@ module tcp_controller #(parameter MEMORY_NUM, parameter LOCAL_PORT)
 	,output					tcp_new_pckt_rcv_o
 	
 	//OUTPUT PARAMETERS TO SEND TCP PACKET
+	,output	[47:0]		eth_dst_addr_o	
+	,output	[31:0]		ip_dst_addr_o
 	,output	[15:0]		tcp_source_port_o
 	,output	[15:0]		tcp_dest_port_o
 	,output	[ 5:0]		tcp_flags_o
@@ -81,6 +89,8 @@ reg				wdat_start;
 reg				rst_start;
 reg				wdat_lock;
 reg				ctrl_dat_lock;
+reg	[31:0]	ip_src_addr_r;
+reg	[47:0]	eth_source_addr_r;
 reg	[ 5:0]	tcp_flags_r;
 reg	[31:0]	tcp_seq_num_r;
 reg	[31:0]	tcp_ack_num_r;
@@ -94,6 +104,7 @@ reg	[31:0]	ACK_NEXT;
 reg	[31:0]	SND_UNA;				//unacknowledged sequence number
 reg				tcp_op_rcv_rd_r;
 reg	[31:0]	time_out_r;
+reg	[ 2:0]	sack_resend_cnt;
 reg	[15:0]	tcp_dest_port_r;
 reg	[15:0]	tcp_src_port_r;
 reg				new_data_rd_r;
@@ -106,6 +117,8 @@ reg	[ 5:0]	new_flags_r;
 reg	[15:0]	new_window_r;
 reg	[15:0]	new_src_port_r;
 reg	[15:0]	new_dst_port_r;
+reg	[31:0]	new_ip_src_addr_r;
+reg	[47:0]	new_eth_src_addr_r;
 
 
 //TCP FLAGS
@@ -250,7 +263,20 @@ always @(posedge clk or negedge rst_n)
 	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_dst_port_r <= tcp_dest_port_i;
 	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_dst_port_r <= tcp_dest_port_i;
 	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_dst_port_r <= tcp_dest_port_i;
+	
+//NEW IP SOURCE ADDRESS
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)					new_dst_port_r <= 0;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_ip_src_addr_r <= ip_src_addr_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_ip_src_addr_r <= ip_src_addr_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_ip_src_addr_r <= ip_src_addr_i;	
 
+//NEW ETHERNET FRAME MAC ADDRESS
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)					new_dst_port_r <= 0;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & port_hit & next_pckt_hit_w) 		new_eth_src_addr_r <= eth_src_addr_i;
+	else if ((state == STATE_ESTABLISHED) & new_data_rd_w & tcp_flags_i[1]) 						new_eth_src_addr_r <= eth_src_addr_i;
+	else if ((state != STATE_ESTABLISHED) & new_data_rd_w)												new_eth_src_addr_r <= eth_src_addr_i;
 													
 //----------------------------------------------------------------------//
 //									CONTROLLER MAIN									   //
@@ -350,6 +376,8 @@ always @(posedge clk or negedge rst_n)
 	else if (sack_start)									sack_start <= 1'b0;
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))	
 																sack_start <= 1'b1;
+	else if (time_out_pas_w & (state == STATE_SYN_RCVD) & (sack_resend_cnt != 0))
+																sack_start <= 1'b1;
 
 //START FIN WHEN CONNECTION CLOSE
 always @(posedge clk or negedge rst_n)
@@ -421,11 +449,24 @@ always @(posedge clk or negedge rst_n)
 																tcp_flags_r <= 6'h14;
 	else if (new_data_rdy_r & tcp_op_rcv_rd_r & !rst_rcv & !ack_rcv & (state == STATE_CLOSED))
 																tcp_flags_r <= 6'h04;
-																
+												
+//TCP SOURCE PORT												
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)												tcp_src_port_r <= 0;
 	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))
-																tcp_src_port_r <= new_src_port_r;																
+																tcp_src_port_r <= new_src_port_r;
+
+//ETHERNET SOURCE MAC ADDRESS																
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												eth_source_addr_r <= 0;
+	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))
+																eth_source_addr_r <= new_eth_src_addr_r;																	
+																
+//IP SOURCE ADDRESS															
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)												ip_src_addr_r <= 0;
+	else if (syn_rcv & !ack_rcv & (state == STATE_LISTEN))
+																ip_src_addr_r <= new_ip_src_addr_r;																
 	
 //INPUT ACKNOWLEDGEMENT NUMBER
 /*
@@ -556,18 +597,31 @@ always @(posedge clk or negedge rst_n)
 	if (!rst_n)																test5_o_r <= 32'b0;
 	else if (tcp_op_rcv_i & tcp_op_rcv_rd_o)						test5_o_r <= {test5_o_r[15:0], tcp_window_r};*/
 	
-//TIMER
+//PACKET RESEND TIMER
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)	
 					time_out_r <= 0;
-	else if (!mem_old_dat_flg)
-					time_out_r <= 0;
 					
+	else if (state == STATE_LISTEN)
+					time_out_r <= 32'd300_000_000;
+					
+	else if ((state == STATE_SYN_RCVD) & sack_start)
+					time_out_r <= 32'd300_000_000;	
+					
+	else if ((state == STATE_ESTABLISHED) & !mem_old_dat_flg)
+					time_out_r <= 0;					
 	else if ((state == STATE_ESTABLISHED) & wdat_start & mem_old_dat_flg)
 					time_out_r <= resend_time_i;
 					
 	else if (!time_out_pas_w)
 					time_out_r <= time_out_r - 1'b1;
+					
+//SACK RESEND COUNTER					
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)									sack_resend_cnt <= 3'd4;
+	else if (state == STATE_LISTEN)		sack_resend_cnt <= 3'd4;
+	else if ((state == STATE_SYN_RCVD) & sack_start)
+													sack_resend_cnt <= sack_resend_cnt - 1'b1;
 					
 assign time_out_pas_w = time_out_r == 0;
 
@@ -686,6 +740,8 @@ tcp_unconf_mem_arbiter #(MEMORY_NUM) tcp_mem_notack_arbiter
 );
 											
 //OUTPUT SIGNALS	
+assign eth_dst_addr_o			= eth_source_addr_r;
+assign ip_dst_addr_o				= ip_src_addr_r;
 assign tcp_wdat_start_o			= wdat_start;
 assign tcp_data_len_o			= tcp_data_len_r;
 assign tcp_flags_o				= tcp_flags_r;

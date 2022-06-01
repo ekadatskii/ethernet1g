@@ -1,4 +1,3 @@
-//TODO Проверка CRC, отложенный старт на доп поля IP, другие протоколы
 module network_layer
 (
 	input					clk
@@ -69,15 +68,19 @@ wire				rcv_op_st;
 wire				rcv_op_end;
 wire	[31:0]	rcv_data;
 wire				mac_check;
+wire				prot_check;
 
 //DESTINATION MAC ADDRESS CHECK
 assign mac_check	= dest_addr_i == dev_mac_addr_i;
 
+//ETHERNET PROTOCOL CHECK
+assign prot_check	= prot_type_i == 16'h0800;	//IPv4
+
 //INPUT CONTROL SIGNALS AFTER MAC ADDRESS FILTER
-assign rcv_op		= rcv_op_i 		& mac_check;
-assign rcv_op_st	= rcv_op_st_i	& mac_check;
-assign rcv_op_end	= rcv_op_end_i	& mac_check;
-assign rcv_data	= mac_check	? rcv_data_i : {32{1'b0}};
+assign rcv_op		= rcv_op_i 		& mac_check & prot_check;
+assign rcv_op_st	= rcv_op_st_i	& mac_check & prot_check;
+assign rcv_op_end	= rcv_op_end_i	& mac_check & prot_check;
+assign rcv_data	= (mac_check & prot_check)	? rcv_data_i : {32{1'b0}};
 
 //WORD COUNTER
 always @(posedge clk or negedge rst_n)
@@ -168,31 +171,30 @@ assign pseudo_crc_sum_www = pseudo_crc_sum_ww[31:16] + pseudo_crc_sum_ww[15:0];
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 									upper_op_start_r <= 1'b0;
 	else if (upper_op_start_r)					upper_op_start_r <= 1'b0;
-	else if ((word_cnt == header_len) & upper_op_run_w & rcv_op)
+	else if (rcv_op & (word_cnt == header_len) & upper_op_run_w)
 														upper_op_start_r <= 1'b1;
 														
-assign upper_op_run_w =	(prot_type_i == 16'h0800) & (prot_type == 8'd06) & (word_cnt >= 5) /*& (dest_addr == 32'hffffffff)*/ &
-								(crc_sum_r == 16'hffff);
+assign upper_op_run_w =	(word_cnt >= 5) & (crc_sum_r == 16'hffff);
 										
 	
 //STOP TRANSPORT LAYER PACKET
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 									upper_op_stop_r <= 1'b0;
 	else if (upper_op_stop_r)					upper_op_stop_r <= 1'b0;
-	else if (rcv_op_end & rcv_op & upper_op_run_w)				
+	else if (rcv_op & rcv_op_end & upper_op_run_w)				
 														upper_op_stop_r <= 1'b1;
 	
 //RECEIVE DATA OPERATION
 always @(posedge clk or negedge rst_n)
 	if (!rst_n)										upper_op_r <= 1'b0;
-	else if (upper_op_run_w & (word_cnt >= header_len) & rcv_op)
+	else if (rcv_op & upper_op_run_w & (word_cnt >= header_len))
 														upper_op_r <= 1'b1;
 	else 												upper_op_r <= 1'b0;
 														
 //TRANSPORT LEVEL HEAD&DATA
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 								upper_data_r <= 32'b0;
-	else if (rcv_op & upper_op_run_w & (word_cnt >= header_len) & rcv_op)
+	else if (rcv_op & upper_op_run_w & (word_cnt >= header_len))
 													upper_data_r <= rcv_data;	
 	else 											upper_data_r <= 32'b0;													
 
