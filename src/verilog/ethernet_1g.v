@@ -57,7 +57,7 @@ parameter	[7:0]		GEN_DATA_USB_WR_ADDRESS	= 8'h07;							//USB WRITE ADDRES IN PA
 parameter	[15:0]	GEN_DATA_LENGTH_IN_BYTE	= 16'd1441;						//SHOULD BE LESS THEN RAM SIZE(2048)
 parameter				CRC_ERR_NUM					= 1_000_000;					//PACKET NUMBER WHEN CRC ERROR TESTS
 parameter				CRC_ERR_ON					= 0;								//ENABLE CRC ERRORS
-parameter				WRAM_NUM						= 2;								//16(MAX)
+parameter				WRAM_NUM						= 16;								//16(MAX)
 parameter	[31:0]	WRAM_NEW_PCKT_TIME		= 32'd50_000_000;				//TIME UNTIL PACKET CAN BE RESEND
 //**************************************************************************************************************//
 
@@ -2289,9 +2289,9 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 assign led_timer_pas = led_timer == 0;
 
 always @(posedge pll_62_5m_clk or negedge rst_n)
-	if (!rst_n)						led_on <= 1'b0;	//OFF
-	else if (usb_dec_dat_en)	led_on <= 1'b1;
-	else if (led_timer_pas)		led_on <= 1'b0;	 
+	if (!rst_n)							led_on <= 1'b0;	//OFF
+	else if (usb_dec_trsmt_cmplt)	led_on <= 1'b1;
+	else if (led_timer_pas)			led_on <= 1'b0;	 
 
 //INOUTS
 //*******************************************

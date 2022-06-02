@@ -33,8 +33,8 @@ module transport_layer
 	,output	[ 1:0]	upper_data_be
 	,output	[15:0]	crc_sum_o
 	,output				crc_check_o
-		
-	,output	[15:0]	test_word_cnt
+			
+
 );
 parameter	OPTIONS_SIZE = 4'd4;
 
@@ -234,7 +234,7 @@ assign data_length = packet_length - (tcp_head_len * 4);
 assign data_be = (((packet_length - (word_cnt << 2)) == 3) ? 2'b11 :
 						((packet_length - (word_cnt << 2)) == 2) ? 2'b10 :
 						((packet_length - (word_cnt << 2)) == 1) ? 2'b01 : 2'b00);
-						
+
 //BYTE ENABLE REG					
 always @(posedge clk or negedge rst_n)
 	if (!rst_n) 												data_be_r <= 2'b0;
@@ -262,9 +262,6 @@ assign tcp_flags_o		= tcp_flags;
 assign tcp_head_len_o	= tcp_head_len;
 assign options_o			= options_reg[95:0];
 assign tcp_window_o		= tcp_window;
-
-assign test_word_cnt		= word_cnt << 2;
-
 
 
 endmodule

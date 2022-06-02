@@ -27,6 +27,14 @@ module usb_prot_decoder (
 	,output					test2_o
 	,output	[3:0]			test3_o
 //	,input	[15:0]		tcp_data_len_i
+
+	//TESTS
+	,output	[ 2:0]	shift_be_o
+	,output	[31:0]	shift_test_o
+	,output				shift_5E_o
+	,output				shift_lock_o
+	,output				shift_run_o
+	,output	[ 3:0]	shift_be_dec_next_o
 );
 
 reg					rcv_run_r1;
@@ -97,11 +105,22 @@ always @(posedge clk or negedge rst_n)
 	
 assign lock = !clr_i & lock_r;
 assign run	= flag_5E4D_r & op_i & !lock_r & ((packet_cnt + op_be_i >= data_len + 4 + 1) || ((header_cnt + op_be_i >= 4) & !header_crc_true));
-assign be_decode_next_o =	(run & (header_cnt + op_be_i == 4)) ?	4'b0000 :
-									(run & (header_cnt + op_be_i == 5)) ?	4'b0001 :
-									(run & (header_cnt + op_be_i == 6)) ?	4'b0011 :
-									(run & (header_cnt + op_be_i == 7)) ?	4'b0111 :
-																						4'b1111;
+assign be_decode_next_o =	
+									(flag_5E4D_r & op_i & !lock_r & (header_cnt + op_be_i >= 4) & !header_crc_true) ?
+									  ((header_cnt + op_be_i == 4) ?	4'b0000 :
+										(header_cnt + op_be_i == 5) ?	4'b0001 :
+										(header_cnt + op_be_i == 6) ?	4'b0011 :
+										(header_cnt + op_be_i == 7) ?	4'b0111 :									
+																						4'b1111) :
+
+									(flag_5E4D_r & op_i & !lock_r & (packet_cnt + op_be_i >= data_len + 5)) ?
+									  ((data_len + 5 - (packet_cnt + op_be_i) == 0) ?	4'b0000 :
+										(data_len + 5 - (packet_cnt + op_be_i) == 1) ?	4'b0001 :
+										(data_len + 5 - (packet_cnt + op_be_i) == 2) ?	4'b0011 :
+										(data_len + 5 - (packet_cnt + op_be_i) == 3) ?	4'b0111 : 
+																													4'b1111) : 4'b1111;
+									
+
 
 //DATA RCV RUN REG 1
 always @(posedge clk or negedge rst_n)
@@ -582,5 +601,67 @@ assign inc_chk_err_o		= trsmt_cmplt & (inc_reg != inc_cnt);
 assign run_o				= run;
 assign trsmt_cmplt_o		= trsmt_cmplt;
 assign dat_be_next_o		= 4'b0;
+
+//TEST
+parameter SHIFT_NUM = 20;
+reg [(SHIFT_NUM*32) - 1: 0] shift_mas;
+reg [(SHIFT_NUM*3)  - 1: 0] shift_be;
+reg [(SHIFT_NUM)    - 1: 0] shift_5E;
+reg [(SHIFT_NUM)    - 1: 0] shift_lock;
+reg [(SHIFT_NUM)    - 1: 0] shift_run;
+reg [(SHIFT_NUM*4)  - 1: 0] shift_be_dec_next;
+
+
+
+
+wire	[31:0]	shift_mas_w				= op_dat_i;
+wire	[ 2:0]	shift_be_w				= op_be_i;
+wire				shift_5E_w				= flag_5E;
+wire				shift_lock_w			= lock;
+wire				shift_run_w				= run_o;
+wire	[ 3:0]	shift_be_dec_next_w	= be_decode_next_o;
+
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_mas <= 0;
+	else if (op_i)
+					shift_mas <= {shift_mas[((SHIFT_NUM-1)*32) - 1: 0], shift_mas_w};
+
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_be <= 0;
+	else if (op_i)
+					shift_be <= {shift_be[((SHIFT_NUM-1)*3) - 1: 0], shift_be_w};
+	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_5E <= 0;
+	else if (op_i)
+					shift_5E <= {shift_5E[((SHIFT_NUM-1)) - 1: 0], shift_5E_w};		
+					
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_lock <= 0;
+	else if (op_i)
+					shift_lock <= {shift_lock[((SHIFT_NUM-1)) - 1: 0], shift_lock_w};				
+			
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_run <= 0;
+	else if (op_i)
+					shift_run <= {shift_run[((SHIFT_NUM-1)) - 1: 0], shift_run_w};		
+			
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_be_dec_next <= 0;
+	else if (op_i)
+					shift_be_dec_next <= {shift_be_dec_next[((SHIFT_NUM-1)*4) - 1: 0], shift_be_dec_next_w};			
+					
+assign shift_test_o 	= shift_mas[((SHIFT_NUM-1)*32) +: 32];
+assign shift_be_o 	= shift_be[((SHIFT_NUM-1)*3)   +:  3];
+assign shift_5E_o		= shift_5E[((SHIFT_NUM-1))     +:  1];
+assign shift_lock_o	= shift_lock[((SHIFT_NUM-1))   +:  1];
+assign shift_run_o	= shift_run[((SHIFT_NUM-1))    +:  1];
+assign shift_be_dec_next_o 	= shift_be_dec_next[((SHIFT_NUM-1)*4)   +:  4];
 
 endmodule

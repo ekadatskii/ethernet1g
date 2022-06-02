@@ -218,7 +218,7 @@ assign upper_op_st		= upper_op_start_r;
 assign upper_op			= upper_op_r;
 assign upper_op_end		= upper_op_stop_r;
 assign upper_data			= upper_data_r;
-assign upper_data_len	= total_len - (4*header_len);
+assign upper_data_len	= total_len - (4*header_len);				
 
 
 endmodule
