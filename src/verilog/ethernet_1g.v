@@ -684,6 +684,8 @@ dhcp_receiver dhcp_receiver
 reg	[ 8:0]	tcp_ram_rd_addr_r;
 reg	[ 8:0]	tcp_ram_wr_addr_r;
 reg	[ 8:0]	tcp_ram_wr_addr_checked_r;
+reg	[ 8:0]	tcp_ram_wr_addr_checked_rr;
+reg	[ 8:0]	tcp_ram_wr_addr_checked_rrr;
 reg	[15:0]	tcp_ram_pckt_cnt;
 reg	[15:0]	tcp_ram_ctrl_rd_cnt;
 
@@ -750,12 +752,31 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	else if (tcp_ram_wr_end & (tl_crc_check & !packet_drop & !tl_flags[2]))
 					tcp_ram_wr_addr_checked_r <= tcp_ram_wr_addr_r + tcp_ram_wr;
 					
+//LATENCY 2 FOR DUAL PORT RAM					
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n)	
+		begin				
+					tcp_ram_wr_addr_checked_rr <= 0;
+					tcp_ram_wr_addr_checked_rrr <= 0;
+		end
+	else if (!tcp_state_estblsh_o)
+		begin
+					tcp_ram_wr_addr_checked_rr <= 0;
+					tcp_ram_wr_addr_checked_rrr <= 0;		
+		end
+	else
+		begin
+					tcp_ram_wr_addr_checked_rr <= tcp_ram_wr_addr_checked_r;
+					tcp_ram_wr_addr_checked_rrr <= tcp_ram_wr_addr_checked_rr;
+		end
+			
+					
 assign tcp_ram_wr_addr = tcp_ram_wr_addr_r;
 
 //RAM TO COLLECT DATA FROM TCP RECEIVER AND SEND IT TO USB DECODERS
 //***************************************************************************
 //READ FROM RAM SIGNAL(RD)
-assign tcp_ram_rd = tcp_ram_rd_addr_r != tcp_ram_wr_addr_checked_r;
+assign tcp_ram_rd = tcp_ram_rd_addr_r != tcp_ram_wr_addr_checked_rrr;
 
 //RAM READ ADDRESS
 always @(posedge pll_62_5m_clk or negedge rst_n)
@@ -981,6 +1002,7 @@ reg	[15:0]	increment_data;
 reg	[7:0]		tcp_data_cnt;
 reg				increment_err;
 reg				crc_err;	
+reg				global_err;
 	
 always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n)							tcp_data_cnt <= 8'b0;
@@ -1004,6 +1026,11 @@ always @(posedge pll_62_5m_clk or negedge rst_n)
 	if (!rst_n) 						crc_err <= 1'b0;
 	else if (usb_dec_crc_err_0 | usb_dec_crc_err_1 | usb_dec_crc_err_2)	
 											crc_err <= 1'b1;
+											
+always @(posedge pll_62_5m_clk or negedge rst_n)
+	if (!rst_n) 						global_err <= 1'b0;
+	else if (increment_err | crc_err)
+											global_err <= 1'b1;
 	
 //INTERLAYER FOR CONTROLS BETWEEN MAC AND TCP CONTROLLER
 //*******************************************************************************
@@ -2300,6 +2327,6 @@ assign rgmii_txd		= iobuf_dat_to_phy;
 assign rgmii_tx_ctl	= iobuf_ctl_to_phy;
 assign User_led1		= !led_on;	
 assign User_led2		= !increment_err;
-assign User_led3		= !crc_err;
+assign User_led3		= !global_err;//crc_err;
 
 endmodule

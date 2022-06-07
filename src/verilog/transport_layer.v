@@ -33,8 +33,18 @@ module transport_layer
 	,output	[ 1:0]	upper_data_be
 	,output	[15:0]	crc_sum_o
 	,output				crc_check_o
-			
-
+		
+	,output	[15:0]	test_word_cnt
+	
+	,output	[ 1:0]	shift_be_o
+	,output	[31:0]	shift_test_o
+	,output				shift_st_o
+	,output				shift_end_o
+	,output	[15:0]	shift_len_o	
+	,output				shift_upper_o
+	,output	[15:0]	shift_word_cnt_o
+	,output	[31:0]	shift_test2_o
+	,output	[ 1:0]	shift_be2_o		
 );
 parameter	OPTIONS_SIZE = 4'd4;
 
@@ -262,6 +272,93 @@ assign tcp_flags_o		= tcp_flags;
 assign tcp_head_len_o	= tcp_head_len;
 assign options_o			= options_reg[95:0];
 assign tcp_window_o		= tcp_window;
+
+assign test_word_cnt		= word_cnt << 2;
+
+
+//TEST
+parameter SHIFT_NUM = 20;
+reg [(SHIFT_NUM*32) - 1: 0] shift_mas;
+reg [(SHIFT_NUM*32) - 1: 0] shift_mas2;
+reg [(SHIFT_NUM) - 1: 0] shift_st;
+reg [(SHIFT_NUM) - 1: 0] shift_end;
+reg [(SHIFT_NUM) - 1: 0] shift_upper;
+reg [(SHIFT_NUM*16) - 1: 0] shift_len;
+reg [(SHIFT_NUM*16) - 1: 0] shift_word_cnt;
+reg [(SHIFT_NUM*2) - 1: 0] shift_be;
+reg [(SHIFT_NUM*2) - 1: 0] shift_be2;
+
+
+wire	[15:0] word_cnt_shft = (word_cnt << 2);
+wire	[31:0] shift_mas_w		= (rcv_op & (word_cnt >= 5) & (word_cnt >= tcp_head_len) & ((word_cnt << 2) < packet_length)) ? rcv_data : 32'b0;
+wire 	 		 shift_op_start_w	= (rcv_op & (word_cnt == tcp_head_len) & (packet_length > (tcp_head_len * 4))) ? 1'b1 : 1'b0;
+wire			 shift_op_end_w	= (rcv_op & (word_cnt >= 4) & ((word_cnt + 1 << 2) >= packet_length) & ((word_cnt << 2) < packet_length)) ? 1'b1 : 1'b0;
+wire			 shift_op_w			= (rcv_op & (word_cnt >= 5) & (word_cnt >= tcp_head_len) & ((word_cnt << 2) < packet_length)) ? 1'b1 : 1'b0;
+
+
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_mas <= 0;
+	else if (rcv_op /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_mas <= {shift_mas[((SHIFT_NUM-1)*32) - 1: 0], shift_mas_w};
+					
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_mas2 <= 0;
+	else if (upper_op_r /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_mas2 <= {shift_mas2[((SHIFT_NUM-1)*32) - 1: 0], upper_data_r};	
+	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_be2 <= 0;
+	else if (upper_op_r /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_be2 <= {shift_be2[((SHIFT_NUM-1)*2) - 1: 0], data_be_r};			
+					
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_len <= 0;
+	else if (rcv_op /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_len <= {shift_len[((SHIFT_NUM-1)*16) - 1: 0], packet_length};	
+	
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_word_cnt <= 0;
+	else if (rcv_op /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_word_cnt <= {shift_word_cnt[((SHIFT_NUM-1)*16) - 1: 0], word_cnt_shft};	
+					
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_st <= 0;
+	else if (rcv_op /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_st <= {shift_st[((SHIFT_NUM-1)) - 1: 0], shift_op_start_w};				
+					
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_end <= 0;
+	else if (rcv_op /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_end <= {shift_end[((SHIFT_NUM-1)) - 1: 0], shift_op_end_w};	
+				
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_upper <= 0;
+	else if (rcv_op /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_upper <= {shift_upper[((SHIFT_NUM-1)) - 1: 0], shift_op_w};					
+
+always @(posedge clk or negedge rst_n)
+	if (!rst_n)	
+					shift_be <= 0;
+	else if (rcv_op /*& (total_len > 40) & (word_cnt > 4)*/)
+					shift_be <= {shift_be[((SHIFT_NUM-1)*2) - 1: 0], data_be};					
+					
+assign shift_test_o = shift_mas[((SHIFT_NUM-1)*32) +: 32];				
+assign shift_st_o = shift_st[((SHIFT_NUM-1)) +: 1];
+assign shift_end_o = shift_end[((SHIFT_NUM-1)) +: 1];
+assign shift_len_o =  shift_len[((SHIFT_NUM-1)*16) +: 16];					
+assign shift_be_o = shift_be[((SHIFT_NUM-1)*2) +: 2];	
+assign shift_upper_o = shift_upper[((SHIFT_NUM-1)) +: 1];
+assign shift_word_cnt_o = shift_word_cnt[((SHIFT_NUM-1)*16) +: 16];
+assign shift_test2_o = shift_mas2[((SHIFT_NUM-1)*32) +: 32];
+assign shift_be2_o = shift_be2[((SHIFT_NUM-1)*2) +: 2];	
 
 
 endmodule
